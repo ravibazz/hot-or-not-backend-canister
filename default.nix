@@ -7,10 +7,5 @@ let
 in
 dfx-env.overrideAttrs (old: {
   nativeBuildInputs = with pkgs; old.nativeBuildInputs ++
-    [ rustup pkg-config openssl protobuf cmake cachix killall jq coreutils bc python3Full ];
-
-  # shellHook = ''
-  #   rustup toolchain install stable
-  #   rustup target add wasm32-unknown-unknown
-  # '';
+    [ rustup pkg-config openssl protobuf cmake cachix killall jq coreutils bc python3Full quill];
 })
