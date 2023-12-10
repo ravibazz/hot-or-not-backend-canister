@@ -47,10 +47,6 @@ jobs:
         run: |
           nix-shell --run "dfx build individual_user_template"
           gzip -f -1 ./target/wasm32-unknown-unknown/release/individual_user_template.wasm
-          gzip -f -1 ./target/wasm32-unknown-unknown/release/user_index.wasm
-          gzip -f -1 ./target/wasm32-unknown-unknown/release/post_cache.wasm
-          gzip -f -1 ./target/wasm32-unknown-unknown/release/configuration.wasm
-          gzip -f -1 ./target/wasm32-unknown-unknown/release/data_backup.wasm
       - name: Build user_index canister
         run: |
           nix-shell --run "dfx build user_index"
