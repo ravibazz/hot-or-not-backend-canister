@@ -1,0 +1,80 @@
+name: Canisters test suite run on any push except main
+on:
+  push:
+    branches-ignore:
+        - main
+    paths-ignore:
+      - "notes/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run canister test suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      - name: Cache install Nix packages
+        uses: rikhuijzer/cache-install@v1.0.9
+        with:
+          key: nix-${{ hashFiles('default.nix') }}
+      - name: Cache rust dependencies, build output and DFX build cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+            .dfx/
+          key: rust-test-${{ hashFiles('**/Cargo.lock') }}
+      - name: Start local replica
+        run: nix-shell --run "dfx start --background"
+      - name: Provision local canister IDs for the canisters
+        run: |
+          nix-shell --run "dfx canister create --no-wallet configuration"
+          nix-shell --run "dfx canister create --no-wallet data_backup"
+          nix-shell --run "dfx canister create --no-wallet individual_user_template"
+          nix-shell --run "dfx canister create --no-wallet post_cache"
+          nix-shell --run "dfx canister create --no-wallet user_index"
+      - name: Stop local replica
+        run: nix-shell --run "dfx stop"
+      - name: Build individual_user_template canister
+        run: |
+          nix-shell --run "dfx build individual_user_template"
+          gzip -f -1 ./target/wasm32-unknown-unknown/release/individual_user_template.wasm
+          gzip -f -1 ./target/wasm32-unknown-unknown/release/user_index.wasm
+          gzip -f -1 ./target/wasm32-unknown-unknown/release/post_cache.wasm
+          gzip -f -1 ./target/wasm32-unknown-unknown/release/configuration.wasm
+          gzip -f -1 ./target/wasm32-unknown-unknown/release/data_backup.wasm
+      - name: Build user_index canister
+        run: |
+          nix-shell --run "dfx build user_index"
+      - name: Build configuration canister
+        run: |
+          nix-shell --run "dfx build configuration"
+      - name: Build data_backup canister
+        run: |
+          nix-shell --run "dfx build data_backup"
+      - name: Build post_cache canister
+        run: |
+          nix-shell --run "dfx build post_cache"
+      - name: Run canister test suite
+        run: nix-shell --run "cargo test"
+      - name: 'Create Release'
+      - uses: "marvinpinto/action-automatic-release@latest"
+        with: 
+            repo_token: "${{ secrets.GITHUB_TOKEN }}"
+            automatic_release_tag: "latest"
+            prerelease: true
+            title: "Development Build"
+            files: |
+            ./target/wasm32-unknown-unknown/release/*.wasm
+
+
+
+
