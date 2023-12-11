@@ -34,8 +34,6 @@ jobs:
             target/
             .dfx/
           key: rust-test-${{ hashFiles('**/Cargo.lock') }}
-      - name: Install Quill
-        run: nix-env -iA nixpkgs.quill
       - name: Import DFX identity
         run: |
           touch actions_identity.pem
