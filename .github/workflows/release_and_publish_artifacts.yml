@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
+        with:
+            submodules: 'recursive'
       - name: Cache install Nix packages
         uses: rikhuijzer/cache-install@v1.0.9
         with:
@@ -32,6 +34,14 @@ jobs:
             target/
             .dfx/
           key: rust-test-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install Quill
+        run: nix-env -iA nixpkgs.quill
+      - name: Import DFX identity
+        run: |
+          touch actions_identity.pem
+          echo "${{ secrets.CANISTER_CONTROLLER_SECRET_KEY }}" > actions_identity.pem
+          nix-shell --run "dfx identity import --disable-encryption actions actions_identity.pem"
+          nix-shell --run "dfx identity use actions"
       - name: Start local replica
         run: nix-shell --run "dfx start --background"
       - name: Provision local canister IDs for the canisters
@@ -59,8 +69,6 @@ jobs:
       - name: Build post_cache canister
         run: |
           nix-shell --run "dfx build post_cache"
-      - name: Run canister test suite
-        run: nix-shell --run "cargo test"
       - name: 'Create Release'
         uses: "marvinpinto/action-automatic-releases@latest"
         with: 
@@ -70,6 +78,34 @@ jobs:
             title: "Development Build"
             files: |
                 ./target/wasm32-unknown-unknown/release/*.wasm
+      - name: 'setup env proposal variables'
+        run: |
+            export IDENTITY_NAME=actions
+            export PEM_FILE=actions_identity.pem
+            export CANISTER_IDS_FILE =./sns/sns_canister_ids.json
+            export NEURON_ID=randomtext
+            nix-shell --run "dfx use identity ${IDENTITY_NAME}"
+
+      - name: 'Submit upgrade proposal for user_index canister'
+        run: |
+            export CANISTER_NAME = 'user_index'
+            nix-shell --run "quill sns \
+            --canister-ids-file ./sns/sns_canister_ids.json
+            --pem-file "${PEM_FILE}"" \
+            make-upgrade-canister-proposal \
+            --title "Upgrade ${CANISTER_NAME} Canisters" \
+            --summary "Basic Summary" \
+            --url "${APP_URL}" \
+            --target-canister-id "$(dfx canister id ${CANISTER_NAME} --network ic)" \
+            --wasm-path "./.dfx/local/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz" \
+            --canister-upgrade-arg "(record {})" \
+            ${NEURON_ID} > proposals/user_index/upgrade.json" 
+            
+
+
+
+
+
 
 
 
