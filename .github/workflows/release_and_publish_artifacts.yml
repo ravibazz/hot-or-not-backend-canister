@@ -83,7 +83,7 @@ jobs:
             export IDENTITY_NAME=actions
             export PEM_FILE=actions_identity.pem
             export CANISTER_IDS_FILE =./sns/sns_canister_ids.json
-            export NEURON_ID=randomtext
+            export NEURON_ID= ${{ secrets.NEURON_ID }}
             nix-shell --run "dfx use identity ${IDENTITY_NAME}"
 
       - name: 'Submit upgrade proposal for user_index canister'
