@@ -53,20 +53,20 @@ jobs:
         run: nix-shell --run "dfx stop"
       - name: Build individual_user_template canister
         run: |
-          nix-shell --run "dfx build individual_user_template"
+          nix-shell --run "dfx build individual_user_template --network=ic"
           gzip -f -1 ./target/wasm32-unknown-unknown/release/individual_user_template.wasm
       - name: Build user_index canister
         run: |
-          nix-shell --run "dfx build user_index"
+          nix-shell --run "dfx build user_index --network=ic"
       - name: Build configuration canister
         run: |
-          nix-shell --run "dfx build configuration"
+          nix-shell --run "dfx build configuration --network=ic"
       - name: Build data_backup canister
         run: |
-          nix-shell --run "dfx build data_backup"
+          nix-shell --run "dfx build data_backup --network=ic"
       - name: Build post_cache canister
         run: |
-          nix-shell --run "dfx build post_cache"
+          nix-shell --run "dfx build post_cache --network=ic"
       - name: 'Create Release'
         uses: "marvinpinto/action-automatic-releases@latest"
         with: 
@@ -78,15 +78,15 @@ jobs:
                 ./target/wasm32-unknown-unknown/release/*.wasm
       - name: 'setup env proposal variables'
         run: |
-            export IDENTITY_NAME=actions
-            export PEM_FILE=actions_identity.pem
-            export CANISTER_IDS_FILE =./sns/sns_canister_ids.json
-            export NEURON_ID= ${{ secrets.NEURON_ID }}
+            nix-shell --run "export IDENTITY_NAME=actions"
+            nix-shell --run "export PEM_FILE=actions_identity.pem"
+            nix-shell --run "export CANISTER_IDS_FILE =./sns/sns_canister_ids.json"
+            nix-shell --run "export NEURON_ID=${{ secrets.NEURON_ID }}"
             nix-shell --run "dfx use identity ${IDENTITY_NAME}"
 
       - name: 'Submit upgrade proposal for user_index canister'
         run: |
-            export CANISTER_NAME = 'user_index'
+            nix-shell --run "export CANISTER_NAME=user_index"
             nix-shell --run "quill sns \
             --canister-ids-file ./sns/sns_canister_ids.json
             --pem-file "${PEM_FILE}"" \
@@ -95,7 +95,7 @@ jobs:
             --summary "Basic Summary" \
             --url "${APP_URL}" \
             --target-canister-id "$(dfx canister id ${CANISTER_NAME} --network ic)" \
-            --wasm-path "./.dfx/local/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz" \
+            --wasm-path "./.dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz" \
             --canister-upgrade-arg "(record {})" \
             ${NEURON_ID} > proposals/user_index/upgrade.json" 
             
