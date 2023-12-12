@@ -79,7 +79,7 @@ jobs:
       - name: 'Submit upgrade proposal for user_index canister'
         run: |
           CANISTER_NAME=user_index
-          mkdir -p "proposals/${CANISTER_NAME}
+          mkdir -p "proposals/${CANISTER_NAME}"
           touch "proposals/${CANISTER_NAME}/upgrade.json"
           nix-shell --run "quill sns \
             --canister-ids-file ./sns/sns_canister_ids.json \
@@ -92,14 +92,3 @@ jobs:
             --wasm-path './.dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz' \
             --canister-upgrade-arg '(record {})' \
             ${{secrets.NEURON_ID}}" > "proposals/${CANISTER_NAME}/upgrade.json"
-            
-
-
-           
-          
-
-
-
-
-
-
