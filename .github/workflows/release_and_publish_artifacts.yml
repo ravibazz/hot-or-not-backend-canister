@@ -78,22 +78,23 @@ jobs:
                 ./target/wasm32-unknown-unknown/release/*.wasm
       - name: 'Submit upgrade proposal for user_index canister'
         run: |
-            CANISTER_NAME=user_index
-            nix-shell --run "quill sns \
+          CANISTER_NAME=user_index
+          nix-shell --run "quill sns \
             --canister-ids-file ./sns/sns_canister_ids.json \
-            --pem-file "actions_identity.pem" \
+            --pem-file actions_identity.pem \
             make-upgrade-canister-proposal \
-            --title "Upgrade ${CANISTER_NAME} Canisters" \
-            --summary "Basic Summary" \
-            --url "https://hotornot.wtf" \
-            --target-canister-id "$(dfx canister id ${CANISTER_NAME} --network ic)" \
-            --wasm-path "./.dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz" \
-            --canister-upgrade-arg "(record {})" \
-            ${{secrets.NEURON_ID}} > proposals/user_index/upgrade.json"
+            --title 'Upgrade ${CANISTER_NAME} Canisters' \
+            --summary 'Basic Summary' \
+            --url 'https://hotornot.wtf' \
+            --target-canister-id '$(dfx canister id ${CANISTER_NAME} --network ic)' \
+            --wasm-path './.dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz' \
+            --canister-upgrade-arg '(record {})' \
+            ${{secrets.NEURON_ID}}" > proposals/user_index/upgrade.json
             
 
 
-
+           
+          
 
 
 
