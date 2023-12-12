@@ -76,27 +76,20 @@ jobs:
             title: "Development Build"
             files: |
                 ./target/wasm32-unknown-unknown/release/*.wasm
-      - name: 'setup env proposal variables'
-        run: |
-            nix-shell --run "export IDENTITY_NAME=actions"
-            nix-shell --run "export PEM_FILE=actions_identity.pem"
-            nix-shell --run "export CANISTER_IDS_FILE=./sns/sns_canister_ids.json"
-            nix-shell --run "export NEURON_ID=${{ secrets.NEURON_ID }}"
-
       - name: 'Submit upgrade proposal for user_index canister'
         run: |
-            nix-shell --run "export CANISTER_NAME=user_index"
+            CANISTER_NAME=user_index
             nix-shell --run "quill sns \
-            --canister-ids-file ./sns/sns_canister_ids.json
-            --pem-file "${PEM_FILE}"" \
+            --canister-ids-file ./sns/sns_canister_ids.json \
+            --pem-file "actions_identity.pem" \
             make-upgrade-canister-proposal \
             --title "Upgrade ${CANISTER_NAME} Canisters" \
             --summary "Basic Summary" \
-            --url "${APP_URL}" \
+            --url "https://hotornot.wtf" \
             --target-canister-id "$(dfx canister id ${CANISTER_NAME} --network ic)" \
             --wasm-path "./.dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz" \
             --canister-upgrade-arg "(record {})" \
-            ${NEURON_ID} > proposals/user_index/upgrade.json" 
+            ${{secrets.NEURON_ID}} > proposals/user_index/upgrade.json"
             
 
 
