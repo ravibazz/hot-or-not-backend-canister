@@ -80,7 +80,7 @@ jobs:
         run: |
             nix-shell --run "export IDENTITY_NAME=actions"
             nix-shell --run "export PEM_FILE=actions_identity.pem"
-            nix-shell --run "export CANISTER_IDS_FILE =./sns/sns_canister_ids.json"
+            nix-shell --run "export CANISTER_IDS_FILE=./sns/sns_canister_ids.json"
             nix-shell --run "export NEURON_ID=${{ secrets.NEURON_ID }}"
             nix-shell --run "dfx use identity ${IDENTITY_NAME}"
 
