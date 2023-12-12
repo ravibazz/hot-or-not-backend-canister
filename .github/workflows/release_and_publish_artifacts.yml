@@ -98,7 +98,7 @@ jobs:
             --title 'Upgrade ${CANISTER_NAME} Canisters' \
             --summary 'Basic Summary' \
             --url 'https://hotornot.wtf' \
-            --target-canister-id '$(dfx canister id ${CANISTER_NAME} --network ic)' \
+            --target-canister-id $(dfx canister id ${CANISTER_NAME} --network=ic) \
             --wasm-path './.dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz' \
             --canister-upgrade-arg '(record {})' \
             ${{secrets.NEURON_ID}} > "proposals/${CANISTER_NAME}/upgrade.json"
