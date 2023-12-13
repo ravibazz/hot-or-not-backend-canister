@@ -71,7 +71,8 @@ jobs:
                 ./*.did
       - name: Get commits since last release
         id: changes_since_last_release
-        uses: simbo/changes-between-tags-action@v1
+        run: |
+          echo ":set-output name=changes::$(git log --oneline ${{github.ref#refs/tags/}}^..${{github.ref#refs/tags/}})"
       - name: Install quill from GitHub Releases
         run: |
           curl -LJO https://github.com/dfinity/quill/releases/download/v0.4.2/quill-linux-x86_64-musl
@@ -79,7 +80,7 @@ jobs:
           chmod +x quill
       - name: Submit upgrade proposal for user_index canister
         run: |
-          echo "changes:  ${{ steps.changes_since_last_release.outputs.log }}"
+          echo "changes:  ${{ steps.changes_since_last_release.outputs.changes }}"
           CANISTER_NAME=user_index
           export CANISTER_ID=$(nix-shell --run "dfx canister id ${CANISTER_NAME} --network=ic")
           mkdir -p "proposals/${CANISTER_NAME}"
@@ -93,7 +94,7 @@ jobs:
             # Upgrade ${CANISTER_NAME}
 
             ## Changes
-            ${{ steps.changes_since_last_release.outputs.log }}
+            ${{ steps.changes_since_last_release.outputs.changes }}
             ' \
             --url 'https://hotornot.wtf' \
             --target-canister-id $CANISTER_ID \
