@@ -1,10 +1,8 @@
 name: Release and publish artifacts
 on:
   push:
-    branches-ignore:
-        - main
-    paths-ignore:
-      - "notes/**"
+    tags: 
+      - 'v*'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -56,15 +54,22 @@ jobs:
       - name: Build post_cache canister
         run: |
           nix-shell --run "dfx build post_cache --network=ic"
+      - name: Copy candid files for release
+        run: |
+          cp .dfx/ic/canisters/individual_user_template/service.did individual_user_template.did
+          cp .dfx/ic/canisters/user_index/service.did user_index.did
+          cp .dfx/ic/canisters/data_backup/service.did data_backup.did
+          cp .dfx/ic/canisters/post_cache/service.did post_cache.did
+          cp .dfx/ic/canisters/configuration/service.did configuration.did
       - name: 'Create Release'
         uses: "marvinpinto/action-automatic-releases@latest"
         with: 
             repo_token: "${{ secrets.GITHUB_TOKEN }}"
-            automatic_release_tag: "latest"
-            prerelease: true
+            prerelease: false
             title: "Development Build"
             files: |
-                ./target/wasm32-unknown-unknown/release/*.wasm
+                ./dfx/ic/canisters/*/*.wasm.gz
+                ./*.did
       - name: Install quill from GitHub Releases
         run: |
           # Download the quill binary
@@ -74,8 +79,7 @@ jobs:
 
           # Make it executable
           chmod +x quill
-              
-      - name: 'Submit upgrade proposal for user_index canister'
+      - name: Submit upgrade proposal for user_index canister
         run: |
           CANISTER_NAME=user_index
           export CANISTER_ID=$(nix-shell --run "dfx canister id ${CANISTER_NAME} --network=ic")
