@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: Run canister test suite
+    name: Publish canister artifacts and send upgrade proposals
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -78,7 +78,7 @@ jobs:
       - name: 'Submit upgrade proposal for user_index canister'
         run: |
           CANISTER_NAME=user_index
-          export CANISTER_ID=$(nix-shell --run "dfx canister id user_index --network=ic")
+          export CANISTER_ID=$(nix-shell --run "dfx canister id ${CANISTER_NAME} --network=ic")
           mkdir -p "proposals/${CANISTER_NAME}"
           touch "proposals/${CANISTER_NAME}/upgrade.json"
           ./quill sns \
