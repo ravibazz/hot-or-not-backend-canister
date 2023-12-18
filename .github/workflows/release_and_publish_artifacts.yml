@@ -1,4 +1,4 @@
-name: Release and publish artifacts
+name: Release and submit proposal
 on:
   push:
     tags: 
@@ -12,6 +12,9 @@ jobs:
   test:
     name: Publish canister artifacts and send upgrade proposals
     runs-on: ubuntu-latest
+    env: 
+      NEURON_ID: 4de673e9cd7a1339afea6523a5f227d25e9d739ff52635ac86dbdb0447ae106a
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -99,8 +102,7 @@ jobs:
             --target-canister-id $CANISTER_ID \
             --wasm-path .dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz \
             --canister-upgrade-arg '(record {})' \
-            ${{secrets.NEURON_ID}} > "proposals/${CANISTER_NAME}/upgrade.json"
-          ./quill send proposals/${CANISTER_NAME}/upgrade.json --yes
+            $NEURON_ID > "proposals/${CANISTER_NAME}/upgrade.json"
       - name: Submit upgrade proposal for data_backup canister
         run: |
           CANISTER_NAME=data_backup
@@ -121,8 +123,7 @@ jobs:
             --target-canister-id $CANISTER_ID \
             --wasm-path .dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz \
             --canister-upgrade-arg '(record {})' \
-            ${{secrets.NEURON_ID}} > "proposals/${CANISTER_NAME}/upgrade.json"
-          ./quill send proposals/${CANISTER_NAME}/upgrade.json --yes
+            $NEURON_ID > "proposals/${CANISTER_NAME}/upgrade.json"
       - name: Submit upgrade proposal for post_cache canister
         run: |
           CANISTER_NAME=post_cache
@@ -143,8 +144,7 @@ jobs:
             --target-canister-id $CANISTER_ID \
             --wasm-path .dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz \
             --canister-upgrade-arg '(record {})' \
-            ${{secrets.NEURON_ID}} > "proposals/${CANISTER_NAME}/upgrade.json"
-          ./quill send proposals/${CANISTER_NAME}/upgrade.json --yes
+            $NEURON_ID > "proposals/${CANISTER_NAME}/upgrade.json"
       - name: Submit upgrade proposal for configuration canister
         run: |
           CANISTER_NAME=configuration
@@ -165,7 +165,6 @@ jobs:
             --target-canister-id $CANISTER_ID \
             --wasm-path .dfx/ic/canisters/${CANISTER_NAME}/${CANISTER_NAME}.wasm.gz \
             --canister-upgrade-arg '(record {})' \
-            ${{secrets.NEURON_ID}} > "proposals/${CANISTER_NAME}/upgrade.json"
-          ./quill send proposals/${CANISTER_NAME}/upgrade.json --yes
+            $NEURON_ID > "proposals/${CANISTER_NAME}/upgrade.json"
       - name: Remove messages
         run: rm -r proposals
