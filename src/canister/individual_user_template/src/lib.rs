@@ -1,49 +1,62 @@
 use std::cell::RefCell;
+use std::{collections::BTreeMap, time::SystemTime};
 
 use api::{
     follow::update_profiles_that_follow_me_toggle_list_with_specified_profile::FollowerArg,
     profile::update_profile_display_details::UpdateProfileDetailsError,
 };
-use candid::{export_service, Principal};
+use candid::{Nat, Principal};
 use data_model::CanisterData;
 use ic_cdk::api::management_canister::provisional::CanisterId;
+use ic_cdk_macros::export_candid;
+use ic_nns_governance::pb::v1::{
+    SettleNeuronsFundParticipationRequest, SettleNeuronsFundParticipationResponse,
+};
+use ic_sns_init::pb::v1::SnsInitPayload;
+use icrc_ledger_types::icrc1::transfer::Memo;
 use shared_utils::{
     canister_specific::individual_user_template::types::{
         arg::{FolloweeArg, IndividualUserTemplateInitArgs, PlaceBetArg},
+        cdao::DeployedCdaoCanisters,
+        device_id::DeviceIdentity,
         error::{
-            BetOnCurrentlyViewingPostError, FollowAnotherUserProfileError,
-            GetPostsOfUserProfileError,
+            BetOnCurrentlyViewingPostError, CdaoDeployError, CdaoTokenError,
+            FollowAnotherUserProfileError, GetPostsOfUserProfileError,
         },
         follow::{FollowEntryDetail, FollowEntryId},
-        hot_or_not::{BetOutcomeForBetMaker, BettingStatus, PlacedBetDetail},
+        hot_or_not::{BetDetails, BetOutcomeForBetMaker, BettingStatus, PlacedBetDetail},
+        kv_storage::{NamespaceErrors, NamespaceForFrontend},
+        migration::MigrationErrors,
+        ml_data::{MLFeedCacheItem, SuccessHistoryItemV1, WatchHistoryItem},
         post::{
             Post, PostDetailsForFrontend, PostDetailsFromFrontend, PostViewDetailsFromFrontend,
         },
         profile::{
-            UserProfile, UserProfileDetailsForFrontend, UserProfileUpdateDetailsFromFrontend,
+            UserCanisterDetails, UserProfile, UserProfileDetailsForFrontend,
+            UserProfileDetailsForFrontendV2, UserProfileUpdateDetailsFromFrontend,
         },
+        session::SessionType,
     },
     common::types::{
-        app_primitive_type::PostId, known_principal::KnownPrincipalType,
+        app_primitive_type::PostId,
+        http::{HttpRequest, HttpResponse},
+        known_principal::KnownPrincipalType,
+        top_posts::post_score_index_item::PostStatus,
         utility_token::token_event::TokenEvent,
     },
+    pagination::PaginationError,
     types::canister_specific::individual_user_template::error_types::{
         GetUserUtilityTokenTransactionHistoryError, UpdateProfileSetUniqueUsernameError,
     },
 };
 
 mod api;
-mod data_model;
-#[cfg(test)]
-mod test;
+pub mod data_model;
 mod util;
 
 thread_local! {
     static CANISTER_DATA: RefCell<CanisterData> = RefCell::default();
+    static SNAPSHOT_DATA: RefCell<Vec<u8>> = RefCell::default();
 }
 
-#[ic_cdk::query(name = "__get_candid_interface_tmp_hack")]
-fn export_candid() -> String {
-    export_service!();
-    __export_service()
-}
+export_candid!();

@@ -1,26 +1,27 @@
 use std::cell::RefCell;
 
-use candid::{export_service, Principal};
-use data_model::{canister_upgrade::UpgradeStatus, CanisterData};
-use ic_cdk::api::management_canister::main::CanisterInstallMode;
+use candid::Principal;
+use data_model::CanisterData;
+use ic_cdk::api::{
+    call::CallResult,
+    management_canister::main::{CanisterInstallMode, CanisterStatusResponse},
+};
+use ic_cdk_macros::export_candid;
 use shared_utils::{
-    canister_specific::user_index::types::args::UserIndexInitArgs,
+    canister_specific::user_index::types::{
+        args::UserIndexInitArgs, BroadcastCallStatus, RecycleStatus, UpgradeStatus,
+    },
+    common::types::http::{HttpRequest, HttpResponse},
     common::types::known_principal::KnownPrincipalType,
     types::canister_specific::user_index::error_types::SetUniqueUsernameError,
 };
 
 mod api;
 mod data_model;
-#[cfg(test)]
-mod test;
 mod util;
 
 thread_local! {
     static CANISTER_DATA: RefCell<CanisterData> = RefCell::default();
 }
 
-#[ic_cdk::query(name = "__get_candid_interface_tmp_hack")]
-fn export_candid() -> String {
-    export_service!();
-    __export_service()
-}
+export_candid!();

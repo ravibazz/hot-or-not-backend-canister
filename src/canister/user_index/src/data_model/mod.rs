@@ -1,19 +1,62 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
-use candid::{CandidType, Deserialize, Principal};
+use candid::{Deserialize, Principal};
+use ic_stable_structures::StableBTreeMap;
 use serde::Serialize;
-use shared_utils::common::types::known_principal::KnownPrincipalMap;
+use shared_utils::canister_specific::user_index::types::{
+    BroadcastCallStatus, RecycleStatus, UpgradeStatus,
+};
+use shared_utils::common::types::wasm::{CanisterWasm, WasmType};
 
-use self::{canister_upgrade::UpgradeStatus, configuration::Configuration};
+use self::memory::get_wasm_memory;
+use self::{configuration::Configuration, memory::Memory};
 
-pub mod canister_upgrade;
 pub mod configuration;
+pub mod memory;
 
-#[derive(Default, CandidType, Deserialize, Serialize)]
+const fn _default_true() -> bool {
+    return true;
+}
+
+fn _default_vec_principal() -> HashSet<Principal> {
+    return HashSet::new();
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct CanisterData {
     pub configuration: Configuration,
     pub last_run_upgrade_status: UpgradeStatus,
-    pub known_principal_ids: KnownPrincipalMap,
+    pub allow_upgrades_for_individual_canisters: bool,
+    pub available_canisters: HashSet<Principal>,
+    #[serde(default)]
+    pub backup_canister_pool: HashSet<Principal>,
     pub user_principal_id_to_canister_id_map: BTreeMap<Principal, Principal>,
     pub unique_user_name_to_user_principal_id_map: BTreeMap<String, Principal>,
+    #[serde(skip, default = "_empty_wasms")]
+    pub wasms: StableBTreeMap<WasmType, CanisterWasm, Memory>,
+    #[serde(default)]
+    pub recycle_status: RecycleStatus,
+    #[serde(default)]
+    pub last_broadcast_call_status: BroadcastCallStatus,
+}
+
+impl Default for CanisterData {
+    fn default() -> Self {
+        Self {
+            configuration: Default::default(),
+            last_run_upgrade_status: Default::default(),
+            allow_upgrades_for_individual_canisters: Default::default(),
+            available_canisters: Default::default(),
+            user_principal_id_to_canister_id_map: Default::default(),
+            unique_user_name_to_user_principal_id_map: Default::default(),
+            wasms: _empty_wasms(),
+            backup_canister_pool: Default::default(),
+            recycle_status: Default::default(),
+            last_broadcast_call_status: Default::default(),
+        }
+    }
+}
+
+fn _empty_wasms() -> StableBTreeMap<WasmType, CanisterWasm, Memory> {
+    StableBTreeMap::init(get_wasm_memory())
 }

@@ -1,21 +1,28 @@
 use std::time::{Duration, SystemTime};
 
+use ic_cdk_macros::update;
 use shared_utils::{
     canister_specific::individual_user_template::types::post::{Post, PostDetailsFromFrontend},
     common::utils::system_time,
 };
 
 use crate::{
-    api::hot_or_not_bet::tabulate_hot_or_not_outcome_for_post_slot::tabulate_hot_or_not_outcome_for_post_slot,
-    data_model::CanisterData, CANISTER_DATA,
+    api::{
+        canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+        hot_or_not_bet::tabulate_hot_or_not_outcome_for_post_slot::tabulate_hot_or_not_outcome_for_post_slot,
+    },
+    data_model::CanisterData,
+    util::cycles::{
+        recieve_cycles_from_subnet_orchestrator, request_cycles_from_subnet_orchestrator,
+    },
+    CANISTER_DATA,
 };
 
 use super::update_scores_and_share_with_post_cache_if_difference_beyond_threshold::update_scores_and_share_with_post_cache_if_difference_beyond_threshold;
 
 /// #### Access Control
 /// Only the user whose profile details are stored in this canister can create a post.
-#[ic_cdk::update]
-#[candid::candid_method(update)]
+#[update]
 fn add_post_v2(post_details: PostDetailsFromFrontend) -> Result<u64, String> {
     // * access control
     let current_caller = ic_cdk::caller();
@@ -28,6 +35,8 @@ fn add_post_v2(post_details: PostDetailsFromFrontend) -> Result<u64, String> {
         );
     };
 
+    update_last_canister_functionality_access_time();
+
     let response = CANISTER_DATA.with(|canister_data_ref_cell| {
         add_post_to_memory(
             &mut canister_data_ref_cell.borrow_mut(),
@@ -36,38 +45,31 @@ fn add_post_v2(post_details: PostDetailsFromFrontend) -> Result<u64, String> {
         )
     });
 
-    let post_id = response.clone().unwrap();
+    let post_id = response;
 
-    if response.is_ok() {
-        update_scores_and_share_with_post_cache_if_difference_beyond_threshold(&post_id);
-    }
+    update_scores_and_share_with_post_cache_if_difference_beyond_threshold(&post_id);
 
-    if post_details.creator_consent_for_inclusion_in_hot_or_not {
-        // * schedule hot_or_not outcome tabulation for the 48 hours after the post is created
-        (1..=48).for_each(|slot_number: u8| {
-            ic_cdk_timers::set_timer(
-                Duration::from_secs(slot_number as u64 * 60 * 60),
-                move || {
-                    CANISTER_DATA.with(|canister_data_ref_cell| {
-                        tabulate_hot_or_not_outcome_for_post_slot(
-                            &mut canister_data_ref_cell.borrow_mut(),
-                            post_id,
-                            slot_number,
-                        );
-                    });
-                },
-            );
-        })
-    }
+    (1..=48).for_each(|slot_number: u8| {
+        ic_cdk_timers::set_timer(
+            Duration::from_secs(slot_number as u64 * 60 * 60),
+            move || {
+                tabulate_hot_or_not_outcome_for_post_slot(post_id, slot_number);
+            },
+        );
+    });
+
+    ic_cdk::spawn(async {
+        let _res = recieve_cycles_from_subnet_orchestrator().await;
+    }); // 100B additional cycles for computing
 
     Ok(post_id)
 }
 
-fn add_post_to_memory(
+pub fn add_post_to_memory(
     canister_data: &mut CanisterData,
     post_details: &PostDetailsFromFrontend,
     current_system_time: &SystemTime,
-) -> Result<u64, String> {
+) -> u64 {
     let new_post = Post::new(
         canister_data.all_created_posts.len() as u64,
         post_details,
@@ -77,5 +79,6 @@ fn add_post_to_memory(
     canister_data
         .all_created_posts
         .insert(new_post.id, new_post);
-    Ok(new_post_id)
+
+    new_post_id
 }

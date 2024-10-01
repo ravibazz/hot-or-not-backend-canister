@@ -1,5 +1,9 @@
-use crate::CANISTER_DATA;
+use crate::{
+    api::canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+    CANISTER_DATA,
+};
 use ic_cdk::api::call;
+use ic_cdk_macros::update;
 use shared_utils::{
     common::types::known_principal::KnownPrincipalType,
     types::canister_specific::{
@@ -10,8 +14,7 @@ use shared_utils::{
 
 /// # Access Control
 /// Only the user whose profile details are stored in this canister can update their details.
-#[ic_cdk::update]
-#[candid::candid_method(update)]
+#[update]
 async fn update_profile_set_unique_username_once(
     new_unique_username: String,
 ) -> Result<(), UpdateProfileSetUniqueUsernameError> {
@@ -24,6 +27,8 @@ async fn update_profile_set_unique_username_once(
     if current_caller != my_principal_id {
         return Err(UpdateProfileSetUniqueUsernameError::NotAuthorized);
     }
+
+    update_last_canister_functionality_access_time();
 
     let user_index_canister_principal_id = CANISTER_DATA.with(|canister_data_ref_cell| {
         canister_data_ref_cell

@@ -1,6 +1,17 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    cmp::Ordering,
+    collections::HashSet,
+    time::{Duration, SystemTime},
+};
 
-use shared_utils::common::utils::system_time;
+use ic_cdk_macros::update;
+use shared_utils::{
+    canister_specific::individual_user_template::types::hot_or_not::{
+        RoomBetPossibleOutcomes, DURATION_OF_EACH_SLOT_IN_SECONDS,
+    },
+    common::utils::permissions::is_caller_controller_or_global_admin,
+    common::utils::system_time,
+};
 
 use crate::{data_model::CanisterData, CANISTER_DATA};
 
@@ -9,33 +20,17 @@ use super::tabulate_hot_or_not_outcome_for_post_slot::tabulate_hot_or_not_outcom
 pub fn reenqueue_timers_for_pending_bet_outcomes() {
     let current_time = system_time::get_current_system_time_from_ic();
 
-    CANISTER_DATA.with(|canister_data_ref_cell| {
-        let canister_data = canister_data_ref_cell.borrow();
-
-        let posts = get_posts_that_have_pending_outcomes(&canister_data, &current_time);
-
-        reenqueue_timers_for_these_posts(&canister_data, posts, &current_time);
-    });
+    CANISTER_DATA.with_borrow(|canister_data| {
+        let posts = get_posts_that_have_pending_outcomes(canister_data);
+        reenqueue_timers_for_these_posts(canister_data, posts, &current_time);
+    })
 }
 
-fn get_posts_that_have_pending_outcomes(
-    canister_data: &CanisterData,
-    current_time: &SystemTime,
-) -> Vec<u64> {
+fn get_posts_that_have_pending_outcomes(canister_data: &CanisterData) -> Vec<u64> {
     canister_data
         .all_created_posts
         .iter()
-        .rev()
-        .take_while(|(_post_id, post)| {
-            let created_in_the_last_48_hours = current_time
-                .duration_since(post.created_at)
-                .unwrap_or(Duration::from_secs((48 * 60 + 5) * 60))
-                .as_secs()
-                < 48 * 60 * 60;
-            let is_a_hot_or_not_post = post.hot_or_not_details.is_some();
-
-            created_in_the_last_48_hours && is_a_hot_or_not_post
-        })
+        .filter(|(_post_id, post)| !post.slots_left_to_be_computed.is_empty())
         .map(|(post_id, _post)| *post_id)
         .collect()
 }
@@ -48,41 +43,111 @@ fn reenqueue_timers_for_these_posts(
     for post_id in post_ids {
         let post = canister_data.all_created_posts.get(&post_id).unwrap();
 
-        let slot_to_enqueue_onwards = (current_time
-            .duration_since(post.created_at)
-            .unwrap()
-            .as_secs()
-            / (60 * 60)) as u8;
-
-        // * schedule hot_or_not outcome tabulation for the 48 hours after the post is created
-        (slot_to_enqueue_onwards..=48).for_each(|slot_number| {
-            ic_cdk_timers::set_timer(
-                post.created_at
-                    .checked_add(Duration::from_secs((slot_number as u64) * 60 * 60))
-                    .unwrap()
-                    .duration_since(*current_time)
-                    .unwrap_or_default(),
-                move || {
-                    CANISTER_DATA.with(|canister_data_ref_cell| {
-                        tabulate_hot_or_not_outcome_for_post_slot(
-                            &mut canister_data_ref_cell.borrow_mut(),
-                            post_id,
-                            slot_number + 1,
-                        );
-                    });
-                },
-            );
-        })
+        post.slots_left_to_be_computed
+            .iter()
+            .for_each(|slot_number| {
+                let slot_id = *slot_number;
+                ic_cdk_timers::set_timer(
+                    post.created_at
+                        .checked_add(Duration::from_secs(
+                            (slot_id as u64) * DURATION_OF_EACH_SLOT_IN_SECONDS,
+                        ))
+                        .unwrap()
+                        .duration_since(*current_time)
+                        .unwrap_or_default(),
+                    move || {
+                        tabulate_hot_or_not_outcome_for_post_slot(post_id, slot_id);
+                    },
+                );
+            })
     }
+}
+
+#[update(guard = "is_caller_controller_or_global_admin")]
+async fn once_reenqueue_timers_for_pending_bet_outcomes() -> Result<Vec<(u64, u8)>, String> {
+    let current_time = system_time::get_current_system_time_from_ic();
+
+    let post_w_slot = CANISTER_DATA.with(|canister_data_ref_cell| {
+        let canister_data = canister_data_ref_cell.borrow_mut();
+
+        let posts_with_slots =
+            once_get_posts_that_have_pending_outcomes(&canister_data, &current_time);
+
+        // once_reenqueue_timers_for_these_posts(&mut canister_data, posts_with_slots, &current_time);
+        once_reenqueue_timers_for_these_posts(posts_with_slots.clone());
+        posts_with_slots
+    });
+
+    Ok(post_w_slot)
+}
+
+fn once_reenqueue_timers_for_these_posts(post_slot_ids: Vec<(u64, u8)>) {
+    for (post_id, slot_id) in post_slot_ids {
+        let slot_number = slot_id;
+
+        ic_cdk_timers::set_timer(
+            // random jitter
+            Duration::from_secs(300),
+            move || {
+                tabulate_hot_or_not_outcome_for_post_slot(post_id, slot_number);
+            },
+        );
+    }
+}
+
+fn once_get_posts_that_have_pending_outcomes(
+    canister_data: &CanisterData,
+    current_time: &SystemTime,
+) -> Vec<(u64, u8)> {
+    let room_details_map = &canister_data.room_details_map;
+    let post_and_slot_left_for_computation: HashSet<(u64, u8)> = room_details_map
+        .iter()
+        .filter(|(global_room_id, room_details)| {
+            let bet_ongoing = room_details.bet_outcome == RoomBetPossibleOutcomes::BetOngoing;
+
+            if !bet_ongoing {
+                return false;
+            }
+
+            let slot_id = global_room_id.1;
+
+            let post_created_time = canister_data
+                .all_created_posts
+                .get(&global_room_id.0)
+                .map(|post| post.created_at);
+
+            if let Some(post_created_time) = post_created_time {
+                let slot_computation_time =
+                    post_created_time.checked_add(Duration::from_secs(slot_id as u64 * 65 * 60)); // 5 minutes more for buffer
+
+                let has_slot_passed = slot_computation_time.map(|slot_trigger_time| {
+                    match slot_trigger_time.cmp(current_time) {
+                        Ordering::Less => true,
+                        _ => false,
+                    }
+                });
+
+                has_slot_passed.unwrap_or(false)
+            } else {
+                return false;
+            }
+        })
+        .map(|(global_room_id, _)| (global_room_id.0, global_room_id.1))
+        .collect();
+
+    post_and_slot_left_for_computation.into_iter().collect()
 }
 
 #[cfg(test)]
 mod test {
     use std::collections::HashSet;
 
-    use shared_utils::canister_specific::individual_user_template::types::{
-        hot_or_not::HotOrNotDetails,
-        post::{FeedScore, Post, PostStatus, PostViewStatistics},
+    use shared_utils::{
+        canister_specific::individual_user_template::types::{
+            hot_or_not::HotOrNotDetails,
+            post::{FeedScore, Post, PostViewStatistics},
+        },
+        common::types::top_posts::post_score_index_item::PostStatus,
     };
 
     use super::*;
@@ -94,6 +159,7 @@ mod test {
 
         let post_0 = Post {
             id: 0,
+            is_nsfw: false,
             description: "Singing and dancing".to_string(),
             hashtags: vec!["sing".to_string(), "dance".to_string()],
             video_uid: "video#0001".to_string(),
@@ -103,95 +169,48 @@ mod test {
             share_count: 0,
             view_stats: PostViewStatistics::default(),
             home_feed_score: FeedScore::default(),
-            creator_consent_for_inclusion_in_hot_or_not: true,
             hot_or_not_details: Some(HotOrNotDetails::default()),
+            slots_left_to_be_computed: HashSet::new(),
         };
 
         canister_data
             .all_created_posts
             .insert(canister_data.all_created_posts.len() as u64, post_0);
-        let current_time = post_0_creation_time
-            .checked_add(Duration::from_secs((48 * 60) * 60))
-            .unwrap();
 
-        let posts_that_have_pending_outcomes =
-            get_posts_that_have_pending_outcomes(&canister_data, &current_time);
-
-        assert_eq!(posts_that_have_pending_outcomes.len(), 0);
-
-        let current_time = post_0_creation_time
-            .checked_add(Duration::from_secs(((48 * 60) - 1) * 60))
-            .unwrap();
-
-        let posts_that_have_pending_outcomes =
-            get_posts_that_have_pending_outcomes(&canister_data, &current_time);
-
-        assert_eq!(posts_that_have_pending_outcomes.len(), 1);
-        assert_eq!(posts_that_have_pending_outcomes[0], 0);
-
-        let current_time = post_0_creation_time
-            .checked_add(Duration::from_secs(((48 * 60) + 1) * 60))
-            .unwrap();
-
-        let posts_that_have_pending_outcomes =
-            get_posts_that_have_pending_outcomes(&canister_data, &current_time);
+        let posts_that_have_pending_outcomes = get_posts_that_have_pending_outcomes(&canister_data);
 
         assert_eq!(posts_that_have_pending_outcomes.len(), 0);
 
         let post_1 = Post {
             id: 1,
+            is_nsfw: false,
             description: "Singing and dancing".to_string(),
             hashtags: vec!["sing".to_string(), "dance".to_string()],
             video_uid: "video#0001".to_string(),
             status: PostStatus::ReadyToView,
             created_at: post_0_creation_time
-                .checked_add(Duration::from_secs(60 * 60))
+                .checked_add(Duration::from_secs(DURATION_OF_EACH_SLOT_IN_SECONDS))
                 .unwrap(),
             likes: HashSet::new(),
             share_count: 0,
             view_stats: PostViewStatistics::default(),
             home_feed_score: FeedScore::default(),
-            creator_consent_for_inclusion_in_hot_or_not: true,
             hot_or_not_details: Some(HotOrNotDetails::default()),
+            slots_left_to_be_computed: (1..=48).collect(),
         };
 
         canister_data
             .all_created_posts
             .insert(canister_data.all_created_posts.len() as u64, post_1);
 
-        let current_time = post_0_creation_time
-            .checked_add(Duration::from_secs(((48 * 60) + 1) * 60))
-            .unwrap();
-
-        let posts_that_have_pending_outcomes =
-            get_posts_that_have_pending_outcomes(&canister_data, &current_time);
+        let posts_that_have_pending_outcomes = get_posts_that_have_pending_outcomes(&canister_data);
 
         assert_eq!(posts_that_have_pending_outcomes.len(), 1);
         assert_eq!(posts_that_have_pending_outcomes[0], 1);
-
-        let current_time = post_0_creation_time
-            .checked_add(Duration::from_secs((48 * 60) * 60))
-            .unwrap();
-
-        let posts_that_have_pending_outcomes =
-            get_posts_that_have_pending_outcomes(&canister_data, &current_time);
-
-        assert_eq!(posts_that_have_pending_outcomes.len(), 1);
-        assert_eq!(posts_that_have_pending_outcomes[0], 1);
-
-        let current_time = post_0_creation_time
-            .checked_add(Duration::from_secs(((48 * 60) - 1) * 60))
-            .unwrap();
-
-        let posts_that_have_pending_outcomes =
-            get_posts_that_have_pending_outcomes(&canister_data, &current_time);
-
-        assert_eq!(posts_that_have_pending_outcomes.len(), 2);
-        assert_eq!(posts_that_have_pending_outcomes[0], 1);
-        assert_eq!(posts_that_have_pending_outcomes[1], 0);
 
         let post_2 = Post {
             id: 2,
+            is_nsfw: false,
             description: "Singing and dancing".to_string(),
             hashtags: vec!["sing".to_string(), "dance".to_string()],
             video_uid: "video#0001".to_string(),
@@ -203,24 +222,18 @@ mod test {
             share_count: 0,
             view_stats: PostViewStatistics::default(),
             home_feed_score: FeedScore::default(),
-            creator_consent_for_inclusion_in_hot_or_not: true,
             hot_or_not_details: Some(HotOrNotDetails::default()),
+            slots_left_to_be_computed: (10..=48).collect(),
         };
 
         canister_data
             .all_created_posts
             .insert(canister_data.all_created_posts.len() as u64, post_2);
 
-        let current_time = post_0_creation_time
-            .checked_add(Duration::from_secs(((48 * 60) - 1) * 60))
-            .unwrap();
+        let posts_that_have_pending_outcomes = get_posts_that_have_pending_outcomes(&canister_data);
 
-        let posts_that_have_pending_outcomes =
-            get_posts_that_have_pending_outcomes(&canister_data, &current_time);
-
-        assert_eq!(posts_that_have_pending_outcomes.len(), 3);
-        assert_eq!(posts_that_have_pending_outcomes[0], 2);
-        assert_eq!(posts_that_have_pending_outcomes[1], 1);
-        assert_eq!(posts_that_have_pending_outcomes[2], 0);
+        assert_eq!(posts_that_have_pending_outcomes.len(), 2);
+        assert_eq!(posts_that_have_pending_outcomes[0], 1);
+        assert_eq!(posts_that_have_pending_outcomes[1], 2);
     }
 }

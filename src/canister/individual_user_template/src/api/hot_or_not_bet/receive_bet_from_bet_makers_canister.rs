@@ -1,3 +1,4 @@
+use ic_cdk_macros::update;
 use std::time::SystemTime;
 
 use candid::Principal;
@@ -12,17 +13,21 @@ use shared_utils::{
 };
 
 use crate::{
-    api::post::update_scores_and_share_with_post_cache_if_difference_beyond_threshold::update_scores_and_share_with_post_cache_if_difference_beyond_threshold,
-    data_model::CanisterData, CANISTER_DATA,
+    api::{
+        canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+        post::update_scores_and_share_with_post_cache_if_difference_beyond_threshold::update_scores_and_share_with_post_cache_if_difference_beyond_threshold,
+    },
+    data_model::CanisterData,
+    CANISTER_DATA,
 };
 
-#[ic_cdk::update]
-#[candid::candid_method(update)]
+#[update]
 fn receive_bet_from_bet_makers_canister(
     place_bet_arg: PlaceBetArg,
     bet_maker_principal_id: Principal,
 ) -> Result<BettingStatus, BetOnCurrentlyViewingPostError> {
     let bet_maker_canister_id = ic_cdk::caller();
+    update_last_canister_functionality_access_time();
 
     let status = CANISTER_DATA.with(|canister_data_ref_cell| {
         receive_bet_from_bet_makers_canister_impl(
@@ -62,12 +67,16 @@ fn receive_bet_from_bet_makers_canister_impl(
 
     let post = canister_data.all_created_posts.get_mut(&post_id).unwrap();
 
-    post.place_hot_or_not_bet(
+    post.place_hot_or_not_bet_v1(
         bet_maker_principal_id,
         bet_maker_canister_id,
         bet_amount,
         &bet_direction,
         current_time,
+        &mut canister_data.room_details_map,
+        &mut canister_data.bet_details_map,
+        &mut canister_data.post_principal_map,
+        &mut canister_data.slot_details_map,
     )
 }
 
@@ -88,7 +97,7 @@ fn update_profile_stats_with_bet_placed(
 #[cfg(test)]
 mod test {
     use shared_utils::canister_specific::individual_user_template::types::{
-        hot_or_not::BetDirection,
+        hot_or_not::{BetDirection, GlobalBetId, GlobalRoomId, StablePrincipal},
         post::{Post, PostDetailsFromFrontend},
     };
     use test_utils::setup::test_constants::{
@@ -105,6 +114,7 @@ mod test {
             Post::new(
                 0,
                 &PostDetailsFromFrontend {
+                    is_nsfw: false,
                     description: "Doggos and puppers".into(),
                     hashtags: vec!["doggo".into(), "pupper".into()],
                     video_uid: "abcd#1234".into(),
@@ -128,6 +138,14 @@ mod test {
         );
 
         let post = canister_data.all_created_posts.get(&0).unwrap();
+        let global_room_id = GlobalRoomId(0, 1, 1);
+        let global_bet_id = GlobalBetId(
+            global_room_id,
+            StablePrincipal(get_mock_user_alice_principal_id()),
+        );
+
+        let room_details = canister_data.room_details_map.get(&global_room_id).unwrap();
+        let bet_details = canister_data.bet_details_map.get(&global_bet_id).unwrap();
 
         assert_eq!(
             result,
@@ -138,6 +156,17 @@ mod test {
                 ongoing_room: 1,
                 has_this_user_participated_in_this_post: Some(true)
             })
+        );
+
+        assert_eq!(room_details.room_bets_total_pot, 100);
+        assert_eq!(room_details.total_hot_bets, 1);
+        assert_eq!(room_details.total_not_bets, 0);
+
+        assert_eq!(bet_details.amount, 100);
+        assert_eq!(bet_details.bet_direction, BetDirection::Hot);
+        assert_eq!(
+            bet_details.bet_maker_canister_id,
+            get_mock_user_alice_canister_id()
         );
     }
 }

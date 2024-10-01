@@ -1,13 +1,20 @@
 use candid::{CandidType, Deserialize, Principal};
+use ic_stable_structures::{memory_manager::VirtualMemory, DefaultMemoryImpl};
 use serde::Serialize;
 use std::{
     collections::HashSet,
     time::{Duration, SystemTime},
 };
 
-use crate::canister_specific::individual_user_template::types::profile::UserProfileDetailsForFrontend;
+use crate::{
+    canister_specific::individual_user_template::types::profile::UserProfileDetailsForFrontend,
+    common::types::{app_primitive_type::PostId, top_posts::post_score_index_item::PostStatus},
+};
 
-use super::hot_or_not::{BettingStatus, HotOrNotDetails};
+use super::hot_or_not::{
+    BettingStatus, GlobalRoomId, HotOrNotDetails, RoomDetailsV1, SlotDetailsV1, SlotId,
+    StablePrincipal,
+};
 
 #[derive(CandidType, Clone, Deserialize, Debug, Serialize)]
 pub struct Post {
@@ -21,8 +28,11 @@ pub struct Post {
     pub share_count: u64,
     pub view_stats: PostViewStatistics,
     pub home_feed_score: FeedScore,
-    pub creator_consent_for_inclusion_in_hot_or_not: bool,
     pub hot_or_not_details: Option<HotOrNotDetails>,
+    #[serde(default)]
+    pub is_nsfw: bool,
+    #[serde(default)]
+    pub slots_left_to_be_computed: HashSet<SlotId>,
 }
 
 #[derive(CandidType, Clone, Deserialize, Debug, Serialize)]
@@ -61,19 +71,7 @@ pub struct PostViewStatistics {
     pub average_watch_percentage: u8,
 }
 
-#[derive(Serialize, Deserialize, CandidType, Clone, Default, Debug)]
-pub enum PostStatus {
-    #[default]
-    Uploaded,
-    Transcoding,
-    CheckingExplicitness,
-    BannedForExplicitness,
-    ReadyToView,
-    BannedDueToUserReporting,
-    Deleted,
-}
-
-#[derive(Serialize, CandidType, Deserialize, Debug)]
+#[derive(Serialize, CandidType, Deserialize, Debug, PartialEq, Eq)]
 pub struct PostDetailsForFrontend {
     pub id: u64,
     pub created_by_display_name: Option<String>,
@@ -91,6 +89,7 @@ pub struct PostDetailsForFrontend {
     pub home_feed_ranking_score: u64,
     pub hot_or_not_feed_ranking_score: Option<u64>,
     pub hot_or_not_betting_status: Option<BettingStatus>,
+    pub is_nsfw: bool,
 }
 
 #[derive(Serialize, CandidType, Deserialize)]
@@ -99,6 +98,19 @@ pub struct PostDetailsFromFrontend {
     pub hashtags: Vec<String>,
     pub video_uid: String,
     pub creator_consent_for_inclusion_in_hot_or_not: bool,
+    pub is_nsfw: bool,
+}
+
+impl From<Post> for PostDetailsFromFrontend {
+    fn from(value: Post) -> Self {
+        PostDetailsFromFrontend {
+            description: value.description,
+            hashtags: value.hashtags,
+            video_uid: value.video_uid,
+            creator_consent_for_inclusion_in_hot_or_not: true,
+            is_nsfw: value.is_nsfw,
+        }
+    }
 }
 
 impl Post {
@@ -134,6 +146,21 @@ impl Post {
         user_profile: UserProfileDetailsForFrontend,
         caller: Principal,
         current_time: &SystemTime,
+        room_details_map: &ic_stable_structures::btreemap::BTreeMap<
+            GlobalRoomId,
+            RoomDetailsV1,
+            VirtualMemory<DefaultMemoryImpl>,
+        >,
+        post_principal_map: &ic_stable_structures::btreemap::BTreeMap<
+            (PostId, StablePrincipal),
+            (),
+            VirtualMemory<DefaultMemoryImpl>,
+        >,
+        slot_details_map: &ic_stable_structures::btreemap::BTreeMap<
+            (PostId, SlotId),
+            SlotDetailsV1,
+            VirtualMemory<DefaultMemoryImpl>,
+        >,
     ) -> PostDetailsForFrontend {
         PostDetailsForFrontend {
             id: self.id,
@@ -148,6 +175,7 @@ impl Post {
             status: self.status.clone(),
             total_view_count: self.view_stats.total_view_count,
             like_count: self.likes.len() as u64,
+            is_nsfw: self.is_nsfw,
             liked_by_me: self.likes.contains(&caller),
             home_feed_ranking_score: self.home_feed_score.current_score,
             hot_or_not_feed_ranking_score: if self.hot_or_not_details.is_some() {
@@ -161,11 +189,13 @@ impl Post {
             } else {
                 None
             },
-            hot_or_not_betting_status: if self.creator_consent_for_inclusion_in_hot_or_not {
-                Some(self.get_hot_or_not_betting_status_for_this_post(current_time, &caller))
-            } else {
-                None
-            },
+            hot_or_not_betting_status: Some(self.get_hot_or_not_betting_status_for_this_post_v1(
+                current_time,
+                &caller,
+                room_details_map,
+                post_principal_map,
+                slot_details_map,
+            )),
         }
     }
 
@@ -188,21 +218,15 @@ impl Post {
             created_at: *current_time,
             likes: HashSet::new(),
             share_count: 0,
+            is_nsfw: post_details_from_frontend.is_nsfw,
             view_stats: PostViewStatistics {
                 total_view_count: 0,
                 threshold_view_count: 0,
                 average_watch_percentage: 0,
             },
             home_feed_score: FeedScore::default(),
-            creator_consent_for_inclusion_in_hot_or_not: post_details_from_frontend
-                .creator_consent_for_inclusion_in_hot_or_not,
-            hot_or_not_details: if post_details_from_frontend
-                .creator_consent_for_inclusion_in_hot_or_not
-            {
-                Some(HotOrNotDetails::default())
-            } else {
-                None
-            },
+            hot_or_not_details: Some(HotOrNotDetails::default()),
+            slots_left_to_be_computed: (1..=48).collect(), // 48 slots
         }
     }
 
@@ -392,7 +416,11 @@ impl Post {
 
 #[cfg(test)]
 mod test {
-    use crate::canister_specific::individual_user_template::types::hot_or_not::BetDirection;
+    use std::{fs::File, time::Instant};
+
+    use crate::canister_specific::individual_user_template::types::hot_or_not::{
+        test_hot_or_not::setup_room_and_bet_details_map, BetDirection,
+    };
 
     use super::*;
 
@@ -405,11 +433,12 @@ mod test {
                 hashtags: vec!["#fun".to_string(), "#post".to_string()],
                 video_uid: "abcd1234".to_string(),
                 creator_consent_for_inclusion_in_hot_or_not: false,
+                is_nsfw: false,
             },
             &SystemTime::now(),
         );
 
-        assert!(post.hot_or_not_details.is_none());
+        assert!(post.hot_or_not_details.is_some());
 
         let post = Post::new(
             0,
@@ -418,6 +447,7 @@ mod test {
                 hashtags: vec!["#fun".to_string(), "#post".to_string()],
                 video_uid: "abcd1234".to_string(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &SystemTime::now(),
         );
@@ -427,6 +457,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_1() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_423_915))
             .unwrap();
@@ -443,6 +480,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -456,12 +494,16 @@ mod test {
         post.view_stats.average_watch_percentage = 59;
 
         (0..80).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -475,12 +517,16 @@ mod test {
         );
 
         (80..145).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -502,6 +548,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_2() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_293_841))
             .unwrap();
@@ -518,6 +571,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -531,12 +585,16 @@ mod test {
         post.view_stats.average_watch_percentage = 47;
 
         (0..216).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -550,12 +608,16 @@ mod test {
         );
 
         (216..360).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -577,6 +639,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_3() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_105_696))
             .unwrap();
@@ -593,6 +662,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -606,12 +676,16 @@ mod test {
         post.view_stats.average_watch_percentage = 54;
 
         (0..1_078).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -628,12 +702,16 @@ mod test {
         );
 
         (1_078..2_695).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -655,6 +733,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_4() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_677_615_537))
             .unwrap();
@@ -671,6 +756,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -686,12 +772,16 @@ mod test {
         post.view_stats.average_watch_percentage = 58;
 
         (0..4_725).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -708,12 +798,16 @@ mod test {
         );
 
         (4_725..10_500).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -735,6 +829,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_5() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_675_311_162))
             .unwrap();
@@ -751,6 +852,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -766,12 +868,16 @@ mod test {
         post.view_stats.average_watch_percentage = 59;
 
         (0..26_827).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -788,12 +894,16 @@ mod test {
         );
 
         (26_827..54_750).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -815,6 +925,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_6() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_436_004))
             .unwrap();
@@ -831,6 +948,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -846,12 +964,16 @@ mod test {
         post.view_stats.average_watch_percentage = 30;
 
         (0..18).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -868,12 +990,16 @@ mod test {
         );
 
         (18..45).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -895,6 +1021,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_7() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_295_932))
             .unwrap();
@@ -911,6 +1044,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -926,12 +1060,16 @@ mod test {
         post.view_stats.average_watch_percentage = 24;
 
         (0..40).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -948,12 +1086,16 @@ mod test {
         );
 
         (40..68).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -975,6 +1117,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_8() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_005_696))
             .unwrap();
@@ -991,6 +1140,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1006,12 +1156,16 @@ mod test {
         post.view_stats.average_watch_percentage = 18;
 
         (0..466).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1028,12 +1182,16 @@ mod test {
         );
 
         (466..805).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1055,6 +1213,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_9() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_677_396_626))
             .unwrap();
@@ -1071,6 +1236,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1086,12 +1252,16 @@ mod test {
         post.view_stats.average_watch_percentage = 50;
 
         (0..1_320).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1108,12 +1278,16 @@ mod test {
         );
 
         (1_320..2_400).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1135,6 +1309,13 @@ mod test {
 
     #[test]
     fn test_recalculate_home_feed_score_case_10() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_673_117_006))
             .unwrap();
@@ -1151,6 +1332,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1166,12 +1348,16 @@ mod test {
         post.view_stats.average_watch_percentage = 67;
 
         (0..6_270).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1188,12 +1374,16 @@ mod test {
         );
 
         (6_270..14_250).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1215,6 +1405,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_1() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_423_915))
             .unwrap();
@@ -1231,6 +1428,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1244,12 +1442,16 @@ mod test {
         post.view_stats.average_watch_percentage = 59;
 
         (0..80).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1263,12 +1465,16 @@ mod test {
         );
 
         (80..145).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1304,6 +1510,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_2() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_293_841))
             .unwrap();
@@ -1320,6 +1533,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1333,12 +1547,16 @@ mod test {
         post.view_stats.average_watch_percentage = 47;
 
         (0..216).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1352,12 +1570,16 @@ mod test {
         );
 
         (216..360).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1393,6 +1615,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_3() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_105_696))
             .unwrap();
@@ -1409,6 +1638,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1422,12 +1652,16 @@ mod test {
         post.view_stats.average_watch_percentage = 54;
 
         (0..1_078).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1444,12 +1678,16 @@ mod test {
         );
 
         (1_078..2_695).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1485,6 +1723,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_4() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_677_615_537))
             .unwrap();
@@ -1501,6 +1746,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1516,12 +1762,16 @@ mod test {
         post.view_stats.average_watch_percentage = 58;
 
         (0..4_725).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1538,12 +1788,16 @@ mod test {
         );
 
         (4_725..10_500).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1579,6 +1833,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_5() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_675_311_162))
             .unwrap();
@@ -1595,6 +1856,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1610,12 +1872,16 @@ mod test {
         post.view_stats.average_watch_percentage = 59;
 
         (0..26_827).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1632,12 +1898,16 @@ mod test {
         );
 
         (26_827..54_750).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1673,6 +1943,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_6() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_436_004))
             .unwrap();
@@ -1689,6 +1966,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1704,12 +1982,16 @@ mod test {
         post.view_stats.average_watch_percentage = 30;
 
         (0..18).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1726,12 +2008,16 @@ mod test {
         );
 
         (18..45).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1767,6 +2053,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_7() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_295_932))
             .unwrap();
@@ -1783,6 +2076,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1798,12 +2092,16 @@ mod test {
         post.view_stats.average_watch_percentage = 24;
 
         (0..40).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1820,12 +2118,16 @@ mod test {
         );
 
         (40..68).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1861,6 +2163,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_8() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_678_005_696))
             .unwrap();
@@ -1877,6 +2186,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1892,12 +2202,16 @@ mod test {
         post.view_stats.average_watch_percentage = 18;
 
         (0..466).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -1914,12 +2228,16 @@ mod test {
         );
 
         (466..805).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -1955,6 +2273,13 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_9() {
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_677_396_626))
             .unwrap();
@@ -1971,6 +2296,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -1986,12 +2312,16 @@ mod test {
         post.view_stats.average_watch_percentage = 50;
 
         (0..1_320).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -2008,12 +2338,16 @@ mod test {
         );
 
         (1_320..2_400).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -2049,6 +2383,18 @@ mod test {
 
     #[test]
     fn test_recalculate_hot_or_not_feed_score_case_10() {
+        // let guard = pprof::ProfilerGuardBuilder::default()
+        //     .frequency(1000)
+        //     .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+        //     .build()
+        //     .unwrap();
+        let (
+            mut room_details_map,
+            mut bet_details_map,
+            mut post_principal_map,
+            mut slot_details_map,
+        ) = setup_room_and_bet_details_map();
+
         let post_created_at = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_secs(1_673_117_006))
             .unwrap();
@@ -2065,6 +2411,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );
@@ -2080,12 +2427,16 @@ mod test {
         post.view_stats.average_watch_percentage = 67;
 
         (0..6_270).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Hot,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             if result.is_err() {
                 println!("🧪 Error: {:?}", result);
@@ -2102,12 +2453,16 @@ mod test {
         );
 
         (6_270..14_250).for_each(|number| {
-            let result = post.place_hot_or_not_bet(
+            let result = post.place_hot_or_not_bet_v1(
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 &Principal::self_authenticating((number as usize).to_ne_bytes()),
                 100,
                 &BetDirection::Not,
                 &betting_time,
+                &mut room_details_map,
+                &mut bet_details_map,
+                &mut post_principal_map,
+                &mut slot_details_map,
             );
             assert!(result.is_ok());
         });
@@ -2139,6 +2494,11 @@ mod test {
                 .current_score,
             2_840
         );
+
+        // if let Ok(report) = guard.report().build() {
+        //     let file = File::create("flamegraph.svg").unwrap();
+        //     report.flamegraph(file).unwrap();
+        // };
     }
 
     #[test]
@@ -2153,6 +2513,7 @@ mod test {
                 hashtags: vec!["doggo".into(), "pupper".into()],
                 video_uid: "abcd#1234".into(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             },
             &post_created_at,
         );

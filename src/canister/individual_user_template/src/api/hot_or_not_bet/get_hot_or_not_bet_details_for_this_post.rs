@@ -1,3 +1,4 @@
+use ic_cdk_macros::query;
 use std::time::SystemTime;
 
 use candid::Principal;
@@ -6,12 +7,15 @@ use shared_utils::{
     common::utils::system_time::{self},
 };
 
-use crate::{data_model::CanisterData, CANISTER_DATA};
+use crate::{
+    api::canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+    data_model::CanisterData, CANISTER_DATA,
+};
 
-#[ic_cdk::query]
-#[candid::candid_method(query)]
+#[query]
 fn get_hot_or_not_bet_details_for_this_post(post_id: u64) -> BettingStatus {
     let request_maker = ic_cdk::caller();
+    update_last_canister_functionality_access_time();
 
     CANISTER_DATA.with(|canister_data_ref_cell| {
         get_hot_or_not_bet_details_for_this_post_impl(
@@ -29,11 +33,15 @@ fn get_hot_or_not_bet_details_for_this_post_impl(
     request_maker: &Principal,
     post_id: u64,
 ) -> BettingStatus {
-    canister_data
-        .all_created_posts
-        .get(&post_id)
-        .unwrap()
-        .get_hot_or_not_betting_status_for_this_post(current_time, request_maker)
+    let post = canister_data.all_created_posts.get(&post_id).unwrap();
+
+    post.get_hot_or_not_betting_status_for_this_post_v1(
+        current_time,
+        request_maker,
+        &canister_data.room_details_map,
+        &canister_data.post_principal_map,
+        &canister_data.slot_details_map,
+    )
 }
 
 #[cfg(test)]
@@ -43,9 +51,12 @@ mod test {
         time::{Duration, SystemTime},
     };
 
-    use shared_utils::canister_specific::individual_user_template::types::{
-        hot_or_not::HotOrNotDetails,
-        post::{FeedScore, Post, PostStatus, PostViewStatistics},
+    use shared_utils::{
+        canister_specific::individual_user_template::types::{
+            hot_or_not::HotOrNotDetails,
+            post::{FeedScore, Post, PostViewStatistics},
+        },
+        common::types::top_posts::post_score_index_item::PostStatus,
     };
 
     use super::*;
@@ -59,6 +70,7 @@ mod test {
             0,
             Post {
                 id: 0,
+                is_nsfw: false,
                 description: "Singing and dancing".to_string(),
                 hashtags: vec!["sing".to_string(), "dance".to_string()],
                 video_uid: "video#0001".to_string(),
@@ -68,8 +80,8 @@ mod test {
                 share_count: 0,
                 view_stats: PostViewStatistics::default(),
                 home_feed_score: FeedScore::default(),
-                creator_consent_for_inclusion_in_hot_or_not: true,
                 hot_or_not_details: Some(HotOrNotDetails::default()),
+                slots_left_to_be_computed: Default::default(),
             },
         );
 

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use candid::{CandidType, Deserialize};
 use serde::Serialize;
+use serde_json_any_key::*;
 
 use crate::common::types::utility_token::token_event::{
     HotOrNotOutcomePayoutEvent, MintEvent, StakeEvent, TokenEvent,
@@ -37,10 +38,15 @@ impl TokenBalance {
                 }
             },
             TokenEvent::Burn => {}
-            TokenEvent::Transfer => {}
+            TokenEvent::Transfer { amount, .. } => {
+                self.utility_token_balance -= amount;
+            }
+            TokenEvent::Receive { amount, .. } => {
+                self.utility_token_balance += amount;
+            }
             TokenEvent::Stake { details, .. } => match details {
-                StakeEvent::BetOnHotOrNotPost { bet_amount, .. } => {
-                    self.utility_token_balance -= bet_amount;
+                StakeEvent::BetOnHotOrNotPost { .. } => {
+                    // self.utility_token_balance -= bet_amount;
                 }
             },
             TokenEvent::HotOrNotOutcomePayout { details, .. } => match details {
@@ -76,6 +82,15 @@ impl TokenBalance {
 
         self.utility_token_transaction_history
             .insert(last_key + 1, token_event);
+    }
+
+    // this is being done to handle concurrency issues inside canister
+    pub fn adjust_balance_pre_bet(&mut self, bet_amount: u64) {
+        self.utility_token_balance -= bet_amount;
+    }
+
+    pub fn adjust_balance_for_failed_bet_placement(&mut self, bet_amount: u64) {
+        self.utility_token_balance += bet_amount;
     }
 }
 
@@ -206,7 +221,8 @@ mod test {
                 timestamp: SystemTime::now(),
             });
 
-            assert_eq!(token_balance.utility_token_balance, 1400);
+            // this event is special and does not change the balance
+            assert_eq!(token_balance.utility_token_balance, 1500);
         }
     }
 

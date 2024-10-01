@@ -1,6 +1,10 @@
-use crate::{data_model::CanisterData, CANISTER_DATA};
+use crate::{
+    api::canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+    data_model::CanisterData, CANISTER_DATA,
+};
 
 use candid::Principal;
+use ic_cdk_macros::update;
 use shared_utils::canister_specific::individual_user_template::types::{
     arg::FolloweeArg, error::FollowAnotherUserProfileError, follow::FollowEntryDetail,
 };
@@ -11,8 +15,7 @@ pub const MAX_USERS_IN_FOLLOWER_FOLLOWING_LIST: u64 = 10_000;
 
 /// # Access Control
 /// Only the user whose profile details are stored in this canister can follow another user's profile.
-#[ic_cdk::update]
-#[candid::candid_method(update)]
+#[update]
 async fn update_profiles_i_follow_toggle_list_with_specified_profile(
     arg: FolloweeArg,
 ) -> Result<bool, FollowAnotherUserProfileError> {
@@ -21,6 +24,8 @@ async fn update_profiles_i_follow_toggle_list_with_specified_profile(
     let my_principal_id = CANISTER_DATA
         .with(|canister_data_ref_cell| canister_data_ref_cell.borrow().profile.principal_id)
         .expect("Principal Id should be set");
+
+    update_last_canister_functionality_access_time();
 
     CANISTER_DATA.with(|canister_data_ref_cell| {
         let canister_data = canister_data_ref_cell.borrow();

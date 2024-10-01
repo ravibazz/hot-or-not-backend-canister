@@ -1,16 +1,21 @@
-use crate::CANISTER_DATA;
+use crate::{
+    api::canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+    CANISTER_DATA,
+};
+use ic_cdk_macros::query;
 use shared_utils::{
     common::types::utility_token::token_event::TokenEvent,
     pagination::{self, PaginationError},
     types::canister_specific::individual_user_template::error_types::GetUserUtilityTokenTransactionHistoryError,
 };
 
-#[ic_cdk::query]
-#[candid::candid_method(query)]
+#[query]
 fn get_user_utility_token_transaction_history_with_pagination(
     from_inclusive_id: u64,
     to_exclusive_id: u64,
 ) -> Result<Vec<(u64, TokenEvent)>, GetUserUtilityTokenTransactionHistoryError> {
+    update_last_canister_functionality_access_time();
+
     let (from_inclusive_id, to_exclusive_id) = pagination::get_pagination_bounds(
         from_inclusive_id,
         to_exclusive_id,

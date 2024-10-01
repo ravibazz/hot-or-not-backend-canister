@@ -1,3 +1,4 @@
+use ic_cdk_macros::query;
 use shared_utils::{
     canister_specific::individual_user_template::types::{
         error::GetPostsOfUserProfileError, post::PostDetailsForFrontend,
@@ -7,14 +8,18 @@ use shared_utils::{
     pagination::{self, PaginationError},
 };
 
-use crate::CANISTER_DATA;
+use crate::{
+    api::canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+    CANISTER_DATA,
+};
 
-#[ic_cdk::query]
-#[candid::candid_method(query)]
+#[query]
 fn get_posts_of_this_user_profile_with_pagination(
     from_inclusive_id: u64,
     to_exclusive_id: u64,
 ) -> Result<Vec<PostDetailsForFrontend>, GetPostsOfUserProfileError> {
+    update_last_canister_functionality_access_time();
+
     let (from_inclusive_id, to_exclusive_id) = pagination::get_pagination_bounds(
         from_inclusive_id,
         to_exclusive_id,
@@ -57,9 +62,13 @@ fn get_posts_of_this_user_profile_with_pagination(
                         profile_stats: profile.profile_stats,
                         unique_user_name: profile.unique_user_name.clone(),
                         lifetime_earnings: token_balance.lifetime_earnings,
+                        referrer_details: profile.referrer_details.clone(),
                     },
                     api_caller,
                     &current_time,
+                    &canister_data_ref_cell.borrow().room_details_map,
+                    &canister_data_ref_cell.borrow().post_principal_map,
+                    &canister_data_ref_cell.borrow().slot_details_map,
                 )
             })
         })

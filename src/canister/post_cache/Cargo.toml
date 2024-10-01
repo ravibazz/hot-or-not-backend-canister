@@ -13,7 +13,17 @@ candid = { workspace = true }
 ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
 shared_utils = { workspace = true }
+ic-cdk-macros = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
 test_utils = { workspace = true }
+
+
+[dev-dependencies.shared_utils]
+path = "../../lib/shared_utils"
+features = ["mockdata"]
+
+
+[features]
+mockdata = []
