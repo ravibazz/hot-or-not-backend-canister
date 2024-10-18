@@ -43,64 +43,92 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         user_index_canister_id.to_text()
     );
 
-    let alice_canister_id = state_machine.update_call(
-        *user_index_canister_id,
-        alice_principal_id,
-        "get_requester_principals_canister_id_create_if_not_exists_and_optionally_allow_referrer",
-        candid::encode_one(()).unwrap(),
-    ).map(|reply_payload| {
-        let alice_canister_id: Principal = match reply_payload {
-            WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-            _ => panic!("\n🛑 get_requester_principals_canister_id_create_if_not_exists_and_optionally_allow_referrer failed\n"),
-        };
-        alice_canister_id
-    }).unwrap();
+    let alice_canister_id = state_machine
+        .update_call(
+            *user_index_canister_id,
+            alice_principal_id,
+            "get_requester_principals_canister_id_create_if_not_exists",
+            candid::encode_one(()).unwrap(),
+        )
+        .map(|reply_payload| {
+            let alice_canister_id: Result<Principal, String> = match reply_payload {
+                WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
+                _ => panic!(
+                    "\n🛑 get_requester_principals_canister_id_create_if_not_exists failed\n"
+                ),
+            };
+            alice_canister_id
+        })
+        .unwrap()
+        .unwrap();
 
-    let bob_canister_id = state_machine.update_call(
-        *user_index_canister_id,
-        bob_principal_id,
-        "get_requester_principals_canister_id_create_if_not_exists_and_optionally_allow_referrer",
-        candid::encode_one(()).unwrap(),
-    ).map(|reply_payload| {
-        let bob_canister_id: Principal = match reply_payload {
-            WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-            _ => panic!("\n🛑 get_requester_principals_canister_id_create_if_not_exists_and_optionally_allow_referrer failed\n"),
-        };
-        bob_canister_id
-    }).unwrap();
+    let bob_canister_id = state_machine
+        .update_call(
+            *user_index_canister_id,
+            bob_principal_id,
+            "get_requester_principals_canister_id_create_if_not_exists",
+            candid::encode_one(()).unwrap(),
+        )
+        .map(|reply_payload| {
+            let bob_canister_id: Result<Principal, String> = match reply_payload {
+                WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
+                _ => panic!(
+                    "\n🛑 get_requester_principals_canister_id_create_if_not_exists failed\n"
+                ),
+            };
+            bob_canister_id
+        })
+        .unwrap()
+        .unwrap();
 
-    let charlie_canister_id = state_machine.update_call(
-        *user_index_canister_id,
-        charlie_principal_id,
-        "get_requester_principals_canister_id_create_if_not_exists_and_optionally_allow_referrer",
-        candid::encode_one(()).unwrap(),
-    ).map(|reply_payload| {
-        let charlie_canister_id: Principal = match reply_payload {
-            WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-            _ => panic!("\n🛑 get_requester_principals_canister_id_create_if_not_exists_and_optionally_allow_referrer failed\n"),
-        };
-        charlie_canister_id
-    }).unwrap();
+    let charlie_canister_id = state_machine
+        .update_call(
+            *user_index_canister_id,
+            charlie_principal_id,
+            "get_requester_principals_canister_id_create_if_not_exists",
+            candid::encode_one(()).unwrap(),
+        )
+        .map(|reply_payload| {
+            let charlie_canister_id: Result<Principal, String> = match reply_payload {
+                WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
+                _ => panic!(
+                    "\n🛑 get_requester_principals_canister_id_create_if_not_exists failed\n"
+                ),
+            };
+            charlie_canister_id
+        })
+        .unwrap()
+        .unwrap();
 
-    let dan_canister_id = state_machine.update_call(
-        *user_index_canister_id,
-        dan_principal_id,
-        "get_requester_principals_canister_id_create_if_not_exists_and_optionally_allow_referrer",
-        candid::encode_one(()).unwrap(),
-    ).map(|reply_payload| {
-        let dan_canister_id: Principal = match reply_payload {
-            WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-            _ => panic!("\n🛑 get_requester_principals_canister_id_create_if_not_exists_and_optionally_allow_referrer failed\n"),
-        };
-        dan_canister_id
-    }).unwrap();
+    let dan_canister_id = state_machine
+        .update_call(
+            *user_index_canister_id,
+            dan_principal_id,
+            "get_requester_principals_canister_id_create_if_not_exists",
+            candid::encode_one(()).unwrap(),
+        )
+        .map(|reply_payload| {
+            let dan_canister_id: Result<Principal, String> = match reply_payload {
+                WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
+                _ => panic!(
+                    "\n🛑 get_requester_principals_canister_id_create_if_not_exists failed\n"
+                ),
+            };
+            dan_canister_id
+        })
+        .unwrap()
+        .unwrap();
 
     println!("🧪 alice_canister_id: {:?}", alice_canister_id.to_text());
 
-    let post_creation_time = SystemTime::UNIX_EPOCH
+    let current_time = SystemTime::UNIX_EPOCH
         .checked_add(Duration::from_secs(1_678_438_993))
         .unwrap();
-    state_machine.set_time(post_creation_time);
+    state_machine.set_time(current_time);
+
+    let post_creation_time = SystemTime::UNIX_EPOCH
+        .checked_add(Duration::new(1_678_438_993, 1))
+        .unwrap();
 
     // * Post is created by Alice
     let newly_created_post_id = state_machine
@@ -113,6 +141,7 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
                 hashtags: vec!["fun".to_string(), "video".to_string()],
                 video_uid: "abcd#1234".to_string(),
                 creator_consent_for_inclusion_in_hot_or_not: true,
+                is_nsfw: false,
             })
             .unwrap(),
         )
@@ -132,13 +161,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64, 10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -155,13 +184,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64, 10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -197,13 +226,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -220,13 +249,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -262,13 +291,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -285,13 +314,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -345,13 +374,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -368,13 +397,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -410,13 +439,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -433,13 +462,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -492,13 +521,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -515,13 +544,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -557,13 +586,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -580,13 +609,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -622,13 +651,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -645,13 +674,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -687,13 +716,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -710,13 +739,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -769,13 +798,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -792,13 +821,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -834,13 +863,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -857,13 +886,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -899,13 +928,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_home_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })
@@ -922,13 +951,13 @@ fn when_bob_charlie_dan_interact_with_alice_created_post_then_calculated_home_fe
         .query_call(
             *post_cache_canister_id,
             Principal::anonymous(),
-            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed",
+            "get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor",
             candid::encode_args((0_u64,10_u64)).unwrap(),
         )
         .map(|reply_payload| {
             let returned_posts: Result<Vec<PostScoreIndexItem>, TopPostsFetchError> = match reply_payload {
                 WasmResult::Reply(payload) => candid::decode_one(&payload).unwrap(),
-                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed failed\n"),
+                _ => panic!("\n🛑 get_top_posts_aggregated_from_canisters_on_this_network_for_hot_or_not_feed_cursor failed\n"),
             };
             returned_posts.unwrap()
         })

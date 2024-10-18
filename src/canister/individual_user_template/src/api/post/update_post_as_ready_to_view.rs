@@ -1,12 +1,16 @@
-use shared_utils::{
-    canister_specific::individual_user_template::types::post::PostStatus,
-    common::types::known_principal::KnownPrincipalType,
+use ic_cdk_macros::update;
+use shared_utils::common::types::{
+    known_principal::KnownPrincipalType, top_posts::post_score_index_item::PostStatus,
 };
 
-use crate::CANISTER_DATA;
+use crate::{
+    api::canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+    CANISTER_DATA,
+};
 
-#[ic_cdk::update]
-#[candid::candid_method(update)]
+use super::send_update_post_cache::send_update_post_cache;
+
+#[update]
 fn update_post_as_ready_to_view(id: u64) {
     let api_caller = ic_cdk::caller();
 
@@ -23,6 +27,8 @@ fn update_post_as_ready_to_view(id: u64) {
         return;
     }
 
+    update_last_canister_functionality_access_time();
+
     CANISTER_DATA.with(|canister_data_ref_cell| {
         let mut post_to_update = canister_data_ref_cell
             .borrow_mut()
@@ -38,4 +44,6 @@ fn update_post_as_ready_to_view(id: u64) {
             .all_created_posts
             .insert(id, post_to_update);
     });
+
+    send_update_post_cache(&id);
 }

@@ -1,11 +1,11 @@
 use crate::{data_model::CanisterData, CANISTER_DATA};
+use ic_cdk_macros::init;
 use shared_utils::{
     canister_specific::individual_user_template::types::arg::IndividualUserTemplateInitArgs,
     common::timer::send_metrics::enqueue_timer_for_calling_metrics_rest_api,
 };
 
-#[ic_cdk::init]
-#[candid::candid_method(init)]
+#[init]
 fn init(init_args: IndividualUserTemplateInitArgs) {
     CANISTER_DATA.with(|canister_data_ref_cell| {
         let mut data = canister_data_ref_cell.borrow_mut();
@@ -28,6 +28,9 @@ fn init_impl(init_args: IndividualUserTemplateInitArgs, data: &mut CanisterData)
     data.profile.principal_id = init_args.profile_owner;
 
     data.configuration.url_to_send_canister_metrics_to = init_args.url_to_send_canister_metrics_to;
+
+    data.version_details.version_number = init_args.upgrade_version_number.unwrap_or_default();
+    data.version_details.version = init_args.version;
 }
 
 pub fn send_canister_metrics() {
@@ -48,7 +51,7 @@ pub fn send_canister_metrics() {
 mod test {
     use shared_utils::common::types::known_principal::{KnownPrincipalMap, KnownPrincipalType};
     use test_utils::setup::test_constants::{
-        get_global_super_admin_principal_id, get_mock_canister_id_configuration,
+        get_global_super_admin_principal_id,
         get_mock_canister_id_user_index, get_mock_user_alice_principal_id,
     };
 
@@ -63,10 +66,6 @@ mod test {
             get_global_super_admin_principal_id(),
         );
         known_principal_ids.insert(
-            KnownPrincipalType::CanisterIdConfiguration,
-            get_mock_canister_id_configuration(),
-        );
-        known_principal_ids.insert(
             KnownPrincipalType::CanisterIdUserIndex,
             get_mock_canister_id_user_index(),
         );
@@ -79,6 +78,7 @@ mod test {
             url_to_send_canister_metrics_to: Some(
                 "http://metrics-url.com/receive-metrics".to_string(),
             ),
+            version: String::from("v1.0.0")
         };
         let mut data = CanisterData::default();
 
@@ -91,12 +91,6 @@ mod test {
                 .get(&KnownPrincipalType::UserIdGlobalSuperAdmin)
                 .unwrap(),
             &get_global_super_admin_principal_id()
-        );
-        assert_eq!(
-            data.known_principal_ids
-                .get(&KnownPrincipalType::CanisterIdConfiguration)
-                .unwrap(),
-            &get_mock_canister_id_configuration()
         );
         assert_eq!(
             data.known_principal_ids
@@ -114,5 +108,7 @@ mod test {
             data.configuration.url_to_send_canister_metrics_to,
             Some("http://metrics-url.com/receive-metrics".to_string())
         );
+
+        assert!(data.version_details.version.eq("v1.0.0"));
     }
 }

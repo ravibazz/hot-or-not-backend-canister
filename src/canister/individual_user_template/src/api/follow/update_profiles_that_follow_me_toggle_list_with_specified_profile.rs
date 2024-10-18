@@ -1,9 +1,13 @@
 use candid::{CandidType, Deserialize, Principal};
+use ic_cdk_macros::update;
 use shared_utils::canister_specific::individual_user_template::types::{
     error::FollowAnotherUserProfileError, follow::FollowEntryDetail,
 };
 
-use crate::{data_model::CanisterData, CANISTER_DATA};
+use crate::{
+    api::canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+    data_model::CanisterData, CANISTER_DATA,
+};
 
 use super::update_profiles_i_follow_toggle_list_with_specified_profile::MAX_USERS_IN_FOLLOWER_FOLLOWING_LIST;
 
@@ -15,13 +19,13 @@ pub struct FollowerArg {
 
 /// # Access Control
 /// Only allow calls from canisters of this project
-#[ic_cdk::update]
-#[candid::candid_method(update)]
+#[update]
 async fn update_profiles_that_follow_me_toggle_list_with_specified_profile(
     arg: FollowerArg,
 ) -> Result<bool, FollowAnotherUserProfileError> {
     let calling_canister_principal = ic_cdk::caller();
 
+    update_last_canister_functionality_access_time();
     CANISTER_DATA.with(|canister_data_ref_cell| {
         let mut canister_data = canister_data_ref_cell.borrow_mut();
 

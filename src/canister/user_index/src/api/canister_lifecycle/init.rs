@@ -1,9 +1,9 @@
+use ic_cdk_macros::init;
 use shared_utils::canister_specific::user_index::types::args::UserIndexInitArgs;
 
 use crate::{data_model::CanisterData, CANISTER_DATA};
 
-#[ic_cdk::init]
-#[candid::candid_method(init)]
+#[init]
 fn init(init_args: UserIndexInitArgs) {
     CANISTER_DATA.with(|canister_data_ref_cell| {
         let mut data = canister_data_ref_cell.borrow_mut();
@@ -17,9 +17,12 @@ fn init_impl(init_args: UserIndexInitArgs, data: &mut CanisterData) {
         .unwrap_or_default()
         .iter()
         .for_each(|(principal_belongs_to, principal_id)| {
-            data.known_principal_ids
+            data.configuration
+                .known_principal_ids
                 .insert(*principal_belongs_to, *principal_id);
         });
+    data.allow_upgrades_for_individual_canisters = true;
+    data.last_run_upgrade_status.version = init_args.version;
 }
 
 #[cfg(test)]
@@ -31,7 +34,7 @@ mod test {
         common::types::known_principal::{KnownPrincipalMap, KnownPrincipalType},
     };
     use test_utils::setup::test_constants::{
-        get_global_super_admin_principal_id, get_mock_canister_id_configuration,
+        get_global_super_admin_principal_id,
         get_mock_canister_id_user_index, get_mock_user_alice_canister_id,
     };
 
@@ -44,10 +47,6 @@ mod test {
         known_principal_ids.insert(
             KnownPrincipalType::UserIdGlobalSuperAdmin,
             get_global_super_admin_principal_id(),
-        );
-        known_principal_ids.insert(
-            KnownPrincipalType::CanisterIdConfiguration,
-            get_mock_canister_id_configuration(),
         );
         known_principal_ids.insert(
             KnownPrincipalType::CanisterIdUserIndex,
@@ -72,6 +71,7 @@ mod test {
         let init_args = UserIndexInitArgs {
             known_principal_ids: Some(known_principal_ids),
             access_control_map: Some(access_control_map),
+            version: String::from("v1.0.0"),
         };
         let mut data = CanisterData::default();
 
@@ -80,22 +80,19 @@ mod test {
 
         // * Check the data
         assert_eq!(
-            data.known_principal_ids
+            data.configuration
+                .known_principal_ids
                 .get(&KnownPrincipalType::UserIdGlobalSuperAdmin)
                 .unwrap(),
             &get_global_super_admin_principal_id()
         );
         assert_eq!(
-            data.known_principal_ids
-                .get(&KnownPrincipalType::CanisterIdConfiguration)
-                .unwrap(),
-            &get_mock_canister_id_configuration()
-        );
-        assert_eq!(
-            data.known_principal_ids
+            data.configuration
+                .known_principal_ids
                 .get(&KnownPrincipalType::CanisterIdUserIndex)
                 .unwrap(),
             &get_mock_canister_id_user_index()
         );
+        assert!(data.last_run_upgrade_status.version.eq("v1.0.0"))
     }
 }

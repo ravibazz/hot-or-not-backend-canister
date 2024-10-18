@@ -1,16 +1,20 @@
 use candid::{CandidType, Deserialize, Principal};
 use serde::Serialize;
+use serde_json_any_key::*;
 use std::{
-    collections::{btree_map, BTreeMap, HashMap},
-    iter::Rev,
-    slice, vec,
+    collections::{
+        btree_map::{self, Iter},
+        BTreeMap, HashMap,
+    },
+    iter::{Chain, Rev},
+    slice,
+    time::{Duration, SystemTime},
+    vec,
 };
 
 use crate::common::types::top_posts::post_score_index_item::PostScoreIndexItem;
 
-type PublisherCanisterId = Principal;
-type PostId = u64;
-type Score = u64;
+use super::{PostId, PublisherCanisterId, Score};
 
 #[derive(Default, Debug, Clone, CandidType, Deserialize, Serialize)]
 pub struct PostScoreIndex {

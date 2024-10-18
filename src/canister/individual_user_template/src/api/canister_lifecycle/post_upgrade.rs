@@ -1,25 +1,23 @@
-use std::time::Duration;
 use ciborium::de;
+use ic_cdk::api::call::ArgDecoderConfig;
+use ic_cdk_macros::post_upgrade;
 use ic_stable_structures::Memory;
+use std::borrow::BorrowMut;
 
 use crate::data_model::memory;
 
 use shared_utils::canister_specific::individual_user_template::types::arg::IndividualUserTemplateInitArgs;
 
 use crate::{
-    api::{
-        hot_or_not_bet::reenqueue_timers_for_pending_bet_outcomes::reenqueue_timers_for_pending_bet_outcomes,
-        well_known_principal::update_locally_stored_well_known_principals,
-    },
+    api::hot_or_not_bet::reenqueue_timers_for_pending_bet_outcomes::reenqueue_timers_for_pending_bet_outcomes,
     CANISTER_DATA,
 };
 
-
-#[ic_cdk::post_upgrade]
+#[post_upgrade]
 fn post_upgrade() {
     restore_data_from_stable_memory();
     save_upgrade_args_to_memory();
-    refetch_well_known_principals();
+    migrate_excessive_tokens();
     reenqueue_timers_for_pending_bet_outcomes();
 }
 
@@ -31,16 +29,19 @@ fn restore_data_from_stable_memory() {
 
     let mut canister_data_bytes = vec![0; heap_data_len];
     heap_data.read(4, &mut canister_data_bytes);
-    
 
-    let canister_data = de::from_reader(&*canister_data_bytes).expect("Failed to deserialize heap data");
+    let canister_data =
+        de::from_reader(&*canister_data_bytes).expect("Failed to deserialize heap data");
     CANISTER_DATA.with(|canister_data_ref_cell| {
         *canister_data_ref_cell.borrow_mut() = canister_data;
     });
 }
 
 fn save_upgrade_args_to_memory() {
-    let upgrade_args = ic_cdk::api::call::arg_data::<(IndividualUserTemplateInitArgs,)>().0;
+    let upgrade_args = ic_cdk::api::call::arg_data::<(IndividualUserTemplateInitArgs,)>(
+        ArgDecoderConfig::default(),
+    )
+    .0;
 
     CANISTER_DATA.with(|canister_data_ref_cell| {
         let mut canister_data_ref_cell = canister_data_ref_cell.borrow_mut();
@@ -57,6 +58,8 @@ fn save_upgrade_args_to_memory() {
             canister_data_ref_cell.version_details.version_number = upgrade_version_number;
         }
 
+        canister_data_ref_cell.borrow_mut().version_details.version = upgrade_args.version;
+
         if let Some(url_to_send_canister_metrics_to) = upgrade_args.url_to_send_canister_metrics_to
         {
             canister_data_ref_cell
@@ -66,9 +69,11 @@ fn save_upgrade_args_to_memory() {
     });
 }
 
-const DELAY_FOR_REFETCHING_WELL_KNOWN_PRINCIPALS: Duration = Duration::from_secs(1);
-fn refetch_well_known_principals() {
-    ic_cdk_timers::set_timer(DELAY_FOR_REFETCHING_WELL_KNOWN_PRINCIPALS, || {
-        ic_cdk::spawn(update_locally_stored_well_known_principals::update_locally_stored_well_known_principals())
+fn migrate_excessive_tokens(){
+    CANISTER_DATA.with(|canister_data_ref_cell| {
+        let mut canister_data_ref_cell = canister_data_ref_cell.borrow_mut();
+        if canister_data_ref_cell.my_token_balance.utility_token_balance > 18_00_00_00_00_00_00_00_00_00 {
+            canister_data_ref_cell.my_token_balance.utility_token_balance = 1000;
+        }
     });
 }

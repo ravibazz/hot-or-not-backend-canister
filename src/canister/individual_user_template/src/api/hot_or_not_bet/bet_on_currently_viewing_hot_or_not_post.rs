@@ -1,4 +1,5 @@
 use candid::Principal;
+use ic_cdk_macros::update;
 use shared_utils::{
     canister_specific::individual_user_template::types::{
         arg::PlaceBetArg,
@@ -11,10 +12,12 @@ use shared_utils::{
     },
 };
 
-use crate::{data_model::CanisterData, CANISTER_DATA};
+use crate::{
+    api::canister_management::update_last_access_time::update_last_canister_functionality_access_time,
+    data_model::CanisterData, CANISTER_DATA,
+};
 
-#[ic_cdk::update]
-#[candid::candid_method(update)]
+#[update]
 async fn bet_on_currently_viewing_post(
     place_bet_arg: PlaceBetArg,
 ) -> Result<BettingStatus, BetOnCurrentlyViewingPostError> {
@@ -29,6 +32,9 @@ async fn bet_on_currently_viewing_post(
         )
     })?;
 
+    update_last_canister_functionality_access_time();
+    update_token_balance_before_bet_happens(place_bet_arg.bet_amount);
+    
     let response = ic_cdk::call::<_, (Result<BettingStatus, BetOnCurrentlyViewingPostError>,)>(
         place_bet_arg.post_canister_id,
         "receive_bet_from_bet_makers_canister",
@@ -44,11 +50,15 @@ async fn bet_on_currently_viewing_post(
         ),
     )
     .await
-    .map_err(|_| BetOnCurrentlyViewingPostError::PostCreatorCanisterCallFailed)?
+    .map_err(|_| {
+        update_token_balance_after_bet_placement_fails(place_bet_arg.bet_amount);
+        BetOnCurrentlyViewingPostError::PostCreatorCanisterCallFailed
+    })?
     .0?;
 
     match response {
         BettingStatus::BettingClosed => {
+            update_token_balance_after_bet_placement_fails(place_bet_arg.bet_amount);
             return Err(BetOnCurrentlyViewingPostError::BettingClosed);
         }
         BettingStatus::BettingOpen {
@@ -91,6 +101,21 @@ async fn bet_on_currently_viewing_post(
 
     Ok(response)
 }
+
+// this #[update] is for local testing only see: src/lib/integration_tests/tests/upgrade/excessive_tokens_test.rs
+// #[update]
+pub fn update_token_balance_before_bet_happens(  bet_amount: u64) {
+    CANISTER_DATA.with_borrow_mut(|canister_data| {
+        canister_data.my_token_balance.adjust_balance_pre_bet(bet_amount);
+    });
+}
+
+fn update_token_balance_after_bet_placement_fails( bet_amount: u64) {
+    CANISTER_DATA.with_borrow_mut(|canister_data| {
+        canister_data.my_token_balance.adjust_balance_for_failed_bet_placement(bet_amount);
+    });
+}
+
 
 fn validate_incoming_bet(
     canister_data: &CanisterData,

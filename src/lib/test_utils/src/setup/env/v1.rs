@@ -5,15 +5,13 @@ use ic_test_state_machine_client::{CanisterSettings, StateMachine};
 use shared_utils::{
     access_control::UserAccessRole,
     canister_specific::{
-        configuration::types::args::ConfigurationInitArgs,
-        data_backup::types::args::DataBackupInitArgs, post_cache::types::arg::PostCacheInitArgs,
-        user_index::types::args::UserIndexInitArgs,
+        post_cache::types::arg::PostCacheInitArgs, user_index::types::args::UserIndexInitArgs,
     },
     common::types::known_principal::{KnownPrincipalMap, KnownPrincipalType},
 };
 
 use crate::setup::test_constants::{
-    get_canister_wasm, get_global_super_admin_principal_id,
+    get_canister_wasm, get_global_super_admin_principal_id, get_mock_canister_id_sns,
     v1::{
         CANISTER_INITIAL_CYCLES_FOR_NON_SPAWNING_CANISTERS,
         CANISTER_INITIAL_CYCLES_FOR_SPAWNING_CANISTERS,
@@ -70,20 +68,17 @@ pub fn get_initialized_env_with_provisioned_known_canisters(
         get_global_super_admin_principal_id(),
     );
     known_principal_map_with_all_canisters.insert(
-        KnownPrincipalType::CanisterIdConfiguration,
-        canister_provisioner(CANISTER_INITIAL_CYCLES_FOR_NON_SPAWNING_CANISTERS),
-    );
-    known_principal_map_with_all_canisters.insert(
-        KnownPrincipalType::CanisterIdDataBackup,
-        canister_provisioner(CANISTER_INITIAL_CYCLES_FOR_NON_SPAWNING_CANISTERS),
-    );
-    known_principal_map_with_all_canisters.insert(
         KnownPrincipalType::CanisterIdPostCache,
         canister_provisioner(CANISTER_INITIAL_CYCLES_FOR_NON_SPAWNING_CANISTERS),
     );
     known_principal_map_with_all_canisters.insert(
         KnownPrincipalType::CanisterIdUserIndex,
         canister_provisioner(CANISTER_INITIAL_CYCLES_FOR_SPAWNING_CANISTERS),
+    );
+
+    known_principal_map_with_all_canisters.insert(
+        KnownPrincipalType::CanisterIdSnsGovernance,
+        get_mock_canister_id_sns(),
     );
 
     // * Install canisters
@@ -98,33 +93,12 @@ pub fn get_initialized_env_with_provisioned_known_canisters(
 
     canister_installer(
         *known_principal_map_with_all_canisters
-            .get(&KnownPrincipalType::CanisterIdConfiguration)
-            .unwrap(),
-        get_canister_wasm(KnownPrincipalType::CanisterIdConfiguration),
-        candid::encode_one(ConfigurationInitArgs {
-            known_principal_ids: Some(known_principal_map_with_all_canisters.clone()),
-            ..Default::default()
-        })
-        .unwrap(),
-    );
-    canister_installer(
-        *known_principal_map_with_all_canisters
-            .get(&KnownPrincipalType::CanisterIdDataBackup)
-            .unwrap(),
-        get_canister_wasm(KnownPrincipalType::CanisterIdDataBackup),
-        candid::encode_one(DataBackupInitArgs {
-            known_principal_ids: Some(known_principal_map_with_all_canisters.clone()),
-            ..Default::default()
-        })
-        .unwrap(),
-    );
-    canister_installer(
-        *known_principal_map_with_all_canisters
             .get(&KnownPrincipalType::CanisterIdPostCache)
             .unwrap(),
         get_canister_wasm(KnownPrincipalType::CanisterIdPostCache),
         candid::encode_one(PostCacheInitArgs {
             known_principal_ids: Some(known_principal_map_with_all_canisters.clone()),
+            ..Default::default()
         })
         .unwrap(),
     );
@@ -146,11 +120,40 @@ pub fn get_initialized_env_with_provisioned_known_canisters(
         candid::encode_one(UserIndexInitArgs {
             known_principal_ids: Some(known_principal_map_with_all_canisters.clone()),
             access_control_map: Some(user_index_access_control_map),
+            version: String::from("v1.0.0"),
         })
         .unwrap(),
     );
 
+    let user_index_canister_id = known_principal_map_with_all_canisters
+        .get(&KnownPrincipalType::CanisterIdUserIndex)
+        .unwrap();
+
+    provision_individual_user_canisters(state_machine, user_index_canister_id);
+
     known_principal_map_with_all_canisters
+}
+
+pub fn provision_individual_user_canisters(
+    state_machine: &StateMachine,
+    user_index_canister_id: &Principal,
+) {
+    state_machine.add_cycles(*user_index_canister_id, 10_000_000_000_000_000);
+    let individual_user_template_wasm = include_bytes!(
+        "../../../../../../target/wasm32-unknown-unknown/release/individual_user_template.wasm.gz"
+    );
+    state_machine
+        .update_call(
+            *user_index_canister_id,
+            get_global_super_admin_principal_id(),
+            "create_pool_of_individual_user_available_canisters",
+            candid::encode_args(("v1.0.0", individual_user_template_wasm.to_vec())).unwrap(),
+        )
+        .unwrap();
+
+    for _ in 0..100 {
+        state_machine.tick();
+    }
 }
 
 pub fn get_canister_id_of_specific_type_from_principal_id_map(
